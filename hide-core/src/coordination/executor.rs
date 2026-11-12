@@ -1764,11 +1764,15 @@ fn spawn(
             .map_err(|_| "spawn_unavailable")?;
             // A launched brief waits on the agent's own start, which can take
             // many seconds cold: the clock its record is owed by starts once
-            // the agent takes input (`BriefLaunched` again), as a typed
+            // the agent is seen taking it (`BriefLaunched` again), as a typed
             // brief's starts at its typing, so a slow start raises no notice.
-            // Unseen within the wait, the clock keeps the start's moment.
+            // An agent working on it has taken it, though the engine reads
+            // its start as launching until that turn ends, so the child's
+            // registration below never waits out the turn, during which its
+            // letters would be refused. Unseen within the wait, the clock
+            // keeps the start's moment.
             if let Some(words) = carried {
-                match crate::delivery::ladder::ready(
+                match crate::delivery::ladder::took_launch(
                     engine.as_ref(),
                     pane,
                     name,

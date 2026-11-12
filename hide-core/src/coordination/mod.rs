@@ -1004,8 +1004,9 @@ pub(crate) enum Mutation {
     /// brief counts as submitted, its one sending is spent, and it is never
     /// typed or typed again (`delivery::ladder`). `words` are what the start
     /// adds to carry it, kept from the first such mutation on. Saved again
-    /// once the started agent takes input, it starts the clock its record is
-    /// owed by (`typed_at_unix_ms`) there, the launched brief's typing.
+    /// once the started agent is seen taking it (`ladder::took_launch`: ready
+    /// for input, or working on it), it starts the clock its record is owed
+    /// by (`typed_at_unix_ms`) there, the launched brief's typing.
     BriefLaunched {
         id: String,
         words: Vec<String>,
@@ -1368,8 +1369,9 @@ pub(crate) fn earlier_spawn<'a>(
 /// The caller's own registration, by the same match as `--parent here`,
 /// refusing two. It never registers. A caller with no such record learns
 /// which of the ways it has none: its record ended, its pane's live record
-/// belongs to another session (the pane's agent session changed), or there
-/// is none.
+/// belongs to another session (the pane's agent session changed), a spawn
+/// that started it has not registered it yet ([`registering`]), or there is
+/// none.
 pub(crate) fn here<'a>(
     ledger: &'a Ledger,
     caller: &'a Actor,
@@ -1392,9 +1394,29 @@ pub(crate) fn here<'a>(
             && record.actor.device_id == caller.device_id
     }) {
         Err("participant_session_changed")
+    } else if registering(ledger, caller) {
+        Err("participant_registering")
     } else {
         Err("participant_unavailable")
     }
+}
+
+/// Whether a spawn that has not bound its child holds the caller as that
+/// child: the agent its start named after the spawn runs in the pane the
+/// spawn placed, on its child's machine ([`spawn_machine`]). The spawn goes
+/// on to register it, so the caller is told to ask again shortly rather than
+/// that it is no one. A pane id can name another pane later, so the agent's
+/// name is matched too, as an identity wait does.
+fn registering(ledger: &Ledger, caller: &Actor) -> bool {
+    let pane =
+        crate::address::pane_of(&caller.pane_id, &caller.device_id).unwrap_or(&caller.pane_id);
+    ledger.spawns.iter().any(|spawn| {
+        !spawn.completed
+            && spawn.child.is_none()
+            && spawn.name == caller.name
+            && spawn.pane.as_deref() == Some(pane)
+            && spawn_machine(ledger, spawn) == Some(caller.device_id.as_str())
+    })
 }
 
 /// The live registrations whose agent Hide put to sleep, and those whose
@@ -3162,6 +3184,104 @@ mod tests {
         assert_eq!(
             here(&ledger, &child_actor).err(),
             Some("ambiguous_participant")
+        );
+    }
+
+    /// A caller its spawn started and has not bound yet, by the agent name
+    /// the start gave it in the pane the spawn placed, on the child's
+    /// machine, is told its registration is under way, on this machine and
+    /// on a device alike; another agent in that pane, or the same pane id on
+    /// another machine, is no one, and once bound the caller is the child.
+    #[test]
+    fn a_caller_its_spawn_has_not_bound_yet_is_registering() {
+        let mut ledger = Ledger::default();
+        let parent = record("parent", "native-parent", None);
+        let actor = parent.actor.clone();
+        let parent_id = register(&mut ledger, parent, &actor);
+        let mut placed = |intent: &str, machine: Option<&str>, pane: &str| {
+            let mut command = command(intent);
+            if let Command::Spawn { machine: on, .. } = &mut command {
+                *on = machine.map(str::to_owned);
+            }
+            let reserved = apply(
+                &mut ledger,
+                &actor,
+                &Mutation::Reserve {
+                    parent: parent_id.clone(),
+                    command,
+                },
+                1,
+            )
+            .unwrap();
+            let id = reserved["id"].as_str().unwrap().to_owned();
+            for mutation in [
+                Mutation::Place {
+                    id: id.clone(),
+                    pane: pane.into(),
+                },
+                Mutation::Typed {
+                    id: id.clone(),
+                    profile: None,
+                },
+            ] {
+                apply(&mut ledger, &actor, &mutation, 2).unwrap();
+            }
+            id
+        };
+        let here_spawn = placed("here", None, "w1:p1");
+        placed("there", Some("mini"), "w2:p1");
+        // The started agent as the engine lists it: under the spawn's name.
+        let child = Actor {
+            pane_id: "w1:p1".into(),
+            name: "worker".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: crate::engine::tokens::session_digest("child-session"),
+        };
+        let remote = Actor {
+            pane_id: crate::address::scoped_pane_id("mini", "w2:p1"),
+            device_id: "mini".into(),
+            ..child.clone()
+        };
+        assert_eq!(here(&ledger, &child).err(), Some("participant_registering"));
+        assert_eq!(
+            here(&ledger, &remote).err(),
+            Some("participant_registering")
+        );
+        let stranger = Actor {
+            name: "w1:p1".into(),
+            ..child.clone()
+        };
+        let elsewhere = Actor {
+            pane_id: crate::address::scoped_pane_id("mini", "w1:p1"),
+            device_id: "mini".into(),
+            ..child.clone()
+        };
+        for caller in [&stranger, &elsewhere] {
+            assert_eq!(
+                here(&ledger, caller).err(),
+                Some("participant_unavailable"),
+                "{caller:?}"
+            );
+        }
+        let bound = AgentRecord {
+            name: Some("worker".into()),
+            actor: child.clone(),
+            ..record("w1:p1", "child-session", Some(parent_id.clone()))
+        };
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::BindChild {
+                id: here_spawn,
+                record: bound,
+            },
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            here(&ledger, &child).unwrap().name.as_deref(),
+            Some("worker")
         );
     }
 
