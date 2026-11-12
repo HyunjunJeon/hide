@@ -1419,6 +1419,11 @@ pub(crate) fn delivery_next_action(code: &str) -> &'static str {
         "no_parent" => {
             "You have no parent: no agent answers for you, so your work is the operator's to read; send to a named agent from hide agent list instead"
         }
+        // A caller the spawn that started it has not registered yet: the
+        // spawn binds it within seconds (`coordination::registering`).
+        "participant_registering" => {
+            "Hide is still registering this agent from the spawn that started it; wait a few seconds and run the same command again"
+        }
         "mission_cap_reached" => {
             "The mission's workers are at its cap; wait for one to finish and end it with hide agent end <id>, then run the same command again with the same intent"
         }
@@ -5457,6 +5462,7 @@ mod tests {
             "target_ambiguous",
             "target_unavailable",
             "no_parent",
+            "participant_registering",
             "codex_capability_unknown",
             "agent_hook_off",
             "agent_not_set_up",
@@ -5474,6 +5480,15 @@ mod tests {
             assert_eq!(reason, code);
             assert_ne!(next, delivery_next_action("other"), "{code}");
         }
+        // A caller its spawn is still registering asks again shortly, with
+        // the same command: the refusal passes on its own.
+        let registering = delivery_next_action("participant_registering");
+        assert!(
+            registering.contains("registering")
+                && registering.contains("wait a few seconds")
+                && registering.contains("same command"),
+            "{registering}"
+        );
     }
 
     /// A plan's refusal answers as the plan words it, with the step, field or

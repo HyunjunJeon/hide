@@ -3746,6 +3746,154 @@ pub(crate) mod tests {
         drop(worker);
     }
 
+    /// A child its spawn started and has not bound yet (the spawn registers
+    /// it once its agent took the brief and showed its session) writes to
+    /// `parent` before it has a registration: it is told that registration
+    /// is under way, a refusal that passes, not that it is no one, and the
+    /// same letter reaches its parent once the spawn has bound it.
+    #[test]
+    fn a_letter_to_parent_from_a_child_still_registering_is_refused_until_it_is_bound() {
+        use crate::coordination::{AgentRecord, Mutation};
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, path) = fixture(root.path());
+        let record =
+            |id: &str, name: &str, pane: &str, parent: Option<&str>, actor: &Actor| AgentRecord {
+                id: id.into(),
+                name: Some(name.into()),
+                machine: crate::node::TEST_NODE.into(),
+                host_scope: "fixture-scope".into(),
+                native_machine: "fixture-machine".into(),
+                session: format!("{pane}-session"),
+                instance: format!("terminal-{pane}"),
+                pane: pane.into(),
+                parent: parent.map(str::to_owned),
+                origin: None,
+                project: None,
+                actor: actor.clone(),
+                ended: false,
+                terminal_id: None,
+                forked: false,
+            };
+        let (parent, child, spawn) = {
+            let mut guard = runtime.lock().unwrap();
+            // The parent in `sender`, and in `recipient` the agent its spawn
+            // started, which the engine lists under the spawn's name.
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+                {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,
+                 "lineage_session":crate::engine::tokens::session_digest("sender-session")},
+                {"id":"worker","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,
+                 "lineage_session":crate::engine::tokens::session_digest("recipient-session")},
+            ]}))
+            .unwrap();
+            guard.observe_delivery_laid(
+                crate::node::TEST_NODE,
+                &payload,
+                Some("fixture-scope"),
+                None,
+            );
+            let parent = guard.delivery_observations["sender"].actor.clone();
+            let child = guard.delivery_observations["recipient"].actor.clone();
+            let mut ledger = crate::delivery::ledger::Ledger::default();
+            ledger
+                .agents
+                .push(record("agent-1", "lead", "sender", None, &parent));
+            ledger.next_id = 2;
+            let reserved = crate::coordination::apply(
+                &mut ledger,
+                &parent,
+                &Mutation::Reserve {
+                    parent: "agent-1".into(),
+                    command: crate::coordination::Command::Spawn {
+                        pick: None,
+                        mission: None,
+                        plan_node: None,
+                        plan: None,
+                        parent: Some("agent-1".into()),
+                        machine: None,
+                        name: "worker".into(),
+                        intent: "task-1".into(),
+                        kind: "codex".into(),
+                        repo: "/checkouts/fixture".into(),
+                        branch: "topic".into(),
+                        path: None,
+                        args: Vec::new(),
+                        launch: Default::default(),
+                        task: None,
+                        brief: Some("fix it".into()),
+                        beside: false,
+                        profile: None,
+                    },
+                },
+                1,
+            )
+            .unwrap();
+            let spawn = reserved["id"].as_str().unwrap().to_owned();
+            // Its pane is named and its agent started there; nothing bound.
+            for mutation in [
+                Mutation::Place {
+                    id: spawn.clone(),
+                    pane: "recipient".into(),
+                },
+                Mutation::Typed {
+                    id: spawn.clone(),
+                    profile: None,
+                },
+            ] {
+                crate::coordination::apply(&mut ledger, &parent, &mutation, 2).unwrap();
+            }
+            ledger.validate().unwrap();
+            crate::delivery::ledger::save(&path, &ledger).unwrap();
+            guard.delivery_ledger = Ok(Arc::new(crate::delivery::ledger::load(&path).unwrap()));
+            (parent, child, spawn)
+        };
+        let context = authority(&target.actor).context;
+        let send = || {
+            let prepared = runtime.lock().unwrap().prepare_delivery(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                None,
+                report_to("parent", "plan"),
+            )?;
+            prepared.run(Duration::from_secs(5))
+        };
+        let (worker, client) = Worker::store(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        runtime.lock().unwrap().install_delivery_client(client);
+        assert_eq!(send().err().as_deref(), Some("participant_registering"));
+        drop(worker);
+
+        // The spawn binds its child, and the same command is a letter.
+        let mut ledger = crate::delivery::ledger::load(&path).unwrap();
+        assert!(ledger.letters.is_empty(), "the refusal recorded nothing");
+        crate::coordination::apply(
+            &mut ledger,
+            &parent,
+            &Mutation::BindChild {
+                id: spawn,
+                record: record("", "worker", "recipient", Some("agent-1"), &child),
+            },
+            3,
+        )
+        .unwrap();
+        crate::delivery::ledger::save(&path, &ledger).unwrap();
+        runtime.lock().unwrap().delivery_ledger =
+            Ok(Arc::new(crate::delivery::ledger::load(&path).unwrap()));
+        let (worker, client) = Worker::store(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        runtime.lock().unwrap().install_delivery_client(client);
+        assert_eq!(send().unwrap()["recipient"]["pane_id"], "sender");
+        drop(worker);
+    }
+
     /// `hide agent show` names an agent as a letter names its recipient, by
     /// its id, its name or its pane, and an agent that ended there is
     /// answered `ended` however it is named. Of several registrations a name
