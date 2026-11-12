@@ -281,7 +281,7 @@ def full_access_words(kind):
     """The words a full-access start of `kind` adds, from the generated web
     contract (contracts/agent-adapters.json), which carries each option's
     values where the journey contract carries only its name."""
-    rows = json.loads((CHECKOUT / "contracts/agent-adapters.json").read_text())
+    rows = json.loads((CHECKOUT / "contracts/agent-adapters.json").read_text(encoding="utf-8"))
     for row in rows:
         if row.get("program") == kind:
             return [word for option in row.get("full_access") or [] for word in option]
@@ -312,7 +312,7 @@ def unproved(kind, program):
 def full_access_flags():
     """Each started agent's full-access arguments by its agent CLI kind, from the
     generated adapter contract."""
-    rows = json.loads((CHECKOUT / "contracts/agent-journey.json").read_text())
+    rows = json.loads((CHECKOUT / "contracts/agent-journey.json").read_text(encoding="utf-8"))
     return {row["agent_cli"]: row.get("full_access_flag") or [] for row in rows}
 
 
