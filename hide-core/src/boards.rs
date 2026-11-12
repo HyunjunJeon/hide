@@ -50,7 +50,6 @@ const CODE_LINE_CHARS: usize = 240;
 const MERMAID_CHARS: usize = 8000;
 const NOTE_CHARS: usize = 1000;
 const LANGUAGE_CHARS: usize = 32;
-const PATH_CHARS: usize = 1024;
 
 /// The refusals whose reason carries a detail (the field to fix, the
 /// current revision, the kept file), which the daemon adds to the next
@@ -394,23 +393,19 @@ fn check_cell(at: &str, cell: &str) -> Result<String, String> {
 /// Why a quote's path is refused, or none: it must name a file below the
 /// checkout's root, as every machine spells it (`/` between names), with no
 /// `..`, and no name of it may be a credential file, a folder named for
-/// secrets or Git's own folder. The `hide` command refuses such a path
-/// before it reads anything (`quote_refused`), and the core refuses it
-/// again, so a board never carries a credential past this guard.
+/// secrets or Git's own folder. The rule is the suggestion investigation's
+/// (`readable_path`), so every path a board quotes is one Hide AI may read.
+/// The `hide` command refuses such a path before it reads anything
+/// (`quote_refused`), and the core refuses it again, so a board never
+/// carries a credential past this guard.
 pub fn quote_path_refused(path: &str) -> Option<&'static str> {
-    if path.is_empty() || path.chars().count() > PATH_CHARS {
-        return Some("names no file below the checkout");
+    match crate::suggestions::investigation::reads::readable_path(path) {
+        Ok(()) => None,
+        Err("credential_file") => Some("names a credential file, a secrets folder or .git"),
+        Err(_) => Some(
+            "is not a path of at most 240 characters below the checkout's root, with / between names and no . or .. names",
+        ),
     }
-    if path.contains('\\') || path.chars().any(char::is_control) {
-        return Some("is not a path below the checkout, with / between names");
-    }
-    if hide_platform::path::RelPath::parse(path).is_err() {
-        return Some("is absolute or holds . or .. names; give it relative to the checkout's root");
-    }
-    if path.split('/').any(crate::session_excerpt::credential_name) {
-        return Some("names a credential file, a secrets folder or .git");
-    }
-    None
 }
 
 /// A block's body as the agent wrote it at `at`, checked and with its text
@@ -933,15 +928,10 @@ fn apply_edit(board: &mut Board, at: &str, edit: Edit, revision: u64) -> Result<
                 ));
             }
             let index = position(board, &format!("{at}.id"), &id)?;
+            // The block leaves first, so `after` is found where it is now;
+            // a refusal drops the whole draft (`apply_edits`).
             let block = board.blocks.remove(index);
-            // The block leaves first, so `after` is found where it is now.
-            let index = match place(board, at, after.as_deref()) {
-                Ok(index) => index,
-                Err(error) => {
-                    board.blocks.insert(index, block);
-                    return Err(error);
-                }
-            };
+            let index = place(board, at, after.as_deref())?;
             board.blocks.insert(index, block);
         }
     }
