@@ -102,6 +102,14 @@ STORES = {
         "and reconciles and trims index rows through the same writer before sweeping, "
         "and committed shelf eviction also deletes its owned history",
     ),
+    "hide-core/src/board_store.rs": (
+        5,
+        "the core's board bodies and index, a folder of its own beside every "
+        "other store: listed once when the runtime is made, where a file the "
+        "index let go is removed, then made, its private files atomically "
+        "replaced and a board's file deleted by one save thread off the "
+        "runtime lock; all move with the core",
+    ),
     "hide-core/src/latest_file.rs": (
         6,
         "the write and read of a core store that keeps only its latest value "

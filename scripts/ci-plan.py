@@ -532,6 +532,7 @@ HELP_SOURCES = (
     "hided/src/device_cli.rs",
     "hided/src/mission_cli.rs",
     "hided/src/plan_cli.rs",
+    "hided/src/board_cli.rs",
     "hided/src/pane_cli.rs",
     "hided/src/session_cli.rs",
 )
