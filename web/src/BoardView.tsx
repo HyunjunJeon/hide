@@ -4,7 +4,7 @@
 // hands in the board, its state, the opener's mark, the head's controls and
 // Close view, so the gallery draws exactly what the app draws.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AreaEmpty } from "./AreaEmpty";
 import { changedBlocks, calloutBody, quoteBody, quoteCaption, type BoardBlock, type BoardCalloutTone, type BoardView as Board, type DrawnBoard } from "./boards";
 import { Badge } from "./components/ui/badge";
@@ -31,6 +31,13 @@ const BOX_FILL: Record<BoardCalloutTone, string> = { info: "", decision: "bg-age
 const BADGE: Record<BoardCalloutTone, string> = { info: "", decision: "bg-agent-working/15 text-agent-working", risk: "bg-warning/15 text-warning" };
 
 const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * The smallest a diagram is drawn, against its natural width: Mermaid's labels
+ * at this scale are about the board's text size. A lane narrower than that
+ * scrolls the diagram sideways in its own box instead of shrinking it unread.
+ */
+const DIAGRAM_MIN_SCALE = 0.8;
 
 export function BoardView({
   board,
@@ -159,7 +166,30 @@ function BlockBody({ block }: { block: BoardBlock }) {
           <div className={PROSE}>{renderMarkdown(quoteBody(block.markdown, block.quote))}</div>
         </figure>
       );
+    case "diagram":
+      return <DiagramFrame>{renderMarkdown(block.markdown)}</DiagramFrame>;
     default:
       return <div className={PROSE}>{renderMarkdown(block.markdown)}</div>;
   }
+}
+
+/** A diagram block, whose picture keeps at least `DIAGRAM_MIN_SCALE` of its natural width whenever Mermaid puts one in. */
+function DiagramFrame({ children }: { children: ReactNode }) {
+  const frame = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = frame.current;
+    if (!root) return;
+    const hold = () => {
+      // Mermaid writes the natural width as the picture's `max-width`.
+      for (const svg of root.querySelectorAll<SVGSVGElement>("[data-markdown-diagram] svg")) {
+        const natural = svg.style.maxWidth;
+        if (natural && natural !== "100%") svg.style.minWidth = `calc(${natural} * ${DIAGRAM_MIN_SCALE})`;
+      }
+    };
+    hold();
+    const observer = new MutationObserver(hold);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={frame} className={PROSE}>{children}</div>;
 }

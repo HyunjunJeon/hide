@@ -18,7 +18,7 @@ vi.mock("./markdownMermaid", async (actual) => ({
   ...(await actual<typeof import("./markdownMermaid")>()),
   drawMermaid: (source: string) => Promise.resolve(source.trimEnd().endsWith("B[")
     ? { kind: "failed", reason: "Parse error on line 3" }
-    : { kind: "svg", svg: "<svg data-test-diagram></svg>" }),
+    : { kind: "svg", svg: '<svg style="max-width: 40em"></svg>' }),
 }));
 
 const NOW = 1_794_000_000_000;
@@ -97,7 +97,9 @@ describe("BoardView", () => {
 
   it("draws a readable diagram as its picture and an unreadable one as its source under why", async () => {
     await draw(referenceBoard(NOW));
-    expect(container.querySelector('[data-board-block="b8"] [data-markdown-diagram="mermaid"] svg')).not.toBeNull();
+    // A narrow lane scrolls the picture rather than shrinking it below its labels' size.
+    const picture = container.querySelector<SVGSVGElement>('[data-board-block="b8"] [data-markdown-diagram="mermaid"] svg');
+    expect(picture?.style.minWidth).toBe("calc(40em * 0.8)");
     const unreadable = container.querySelector('[data-board-block="b10"]');
     expect(unreadable?.querySelector("[data-markdown-diagram]")).toBeNull();
     expect(unreadable?.textContent).toContain("Diagram not drawn: Parse error on line 3");
