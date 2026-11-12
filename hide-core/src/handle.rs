@@ -885,8 +885,9 @@ impl Core {
         if !check_owner_thread(self, "board.command") {
             return Err("board_store_unavailable".into());
         }
-        let (answer, changed) =
-            lock_recover(&self.runtime).board_command(device, caller, expected, command)?;
+        // The guard ends with this statement: a `show` is drawn off the lock.
+        let turn = lock_recover(&self.runtime).board_command(device, caller, expected, command)?;
+        let (answer, changed) = turn.answer();
         if changed {
             notify_change(self);
         }

@@ -88,6 +88,31 @@ impl BoardRuntime {
     }
 }
 
+/// What a `hide board` command answers: an answer made under the lock, or
+/// the boards a `show` prints, copied under the lock and drawn as Markdown
+/// or as their records after it is released (`BoardTurn::answer`), since a
+/// bare `show` prints every board of the session.
+pub(crate) enum BoardTurn {
+    Answered { answer: Value, changed: bool },
+    ShowOne { board: Box<Board>, json: bool },
+    ShowAll { boards: Vec<Board>, json: bool },
+}
+
+impl BoardTurn {
+    /// The command's answer and whether a board changed; a `show` is drawn
+    /// here, off the lock.
+    pub(crate) fn answer(self) -> (Value, bool) {
+        match self {
+            Self::Answered { answer, changed } => (answer, changed),
+            Self::ShowOne { board, json } => (shown(&board, json), false),
+            Self::ShowAll { boards, json } => {
+                let shown: Vec<Value> = boards.iter().map(|board| shown(board, json)).collect();
+                (json!({"boards": shown}), false)
+            }
+        }
+    }
+}
+
 /// Whether `session` is the one `machine` and `id` name.
 fn names(session: &SessionIdentity, (machine, id): &(String, String)) -> bool {
     session.device_id == *machine && session.session_id == *id
@@ -95,14 +120,15 @@ fn names(session: &SessionIdentity, (machine, id): &(String, String)) -> bool {
 
 impl Runtime {
     /// Runs a `hide board` command from `caller`'s pane on `device`.
-    /// Answers the command's answer and whether the book changed.
+    /// Answers the command's answer and whether the book changed, or the
+    /// boards a `show` prints.
     pub(crate) fn board_command(
         &mut self,
         device: &str,
         caller: &str,
         expected: &Context,
         command: BoardCommand,
-    ) -> Result<(Value, bool), String> {
+    ) -> Result<BoardTurn, String> {
         if !command.valid() {
             return Err(refusal("board_invalid", "board: not a board id"));
         }
@@ -190,17 +216,20 @@ impl Runtime {
                 if matches!(board.state, BoardState::Deleted { .. }) {
                     return Err("board_deleted".into());
                 }
-                (shown(board, json), false)
+                return Ok(BoardTurn::ShowOne {
+                    board: Box::new(board.clone()),
+                    json,
+                });
             }
             BoardCommand::Show { board: None, json } => {
-                let shown: Vec<Value> = self
+                let boards: Vec<Board> = self
                     .boards
                     .boards()
                     .filter(|board| board.owner == own)
                     .filter(|board| !matches!(board.state, BoardState::Deleted { .. }))
-                    .map(|board| shown(board, json))
+                    .cloned()
                     .collect();
-                (json!({"boards": shown}), false)
+                return Ok(BoardTurn::ShowAll { boards, json });
             }
             BoardCommand::List {} => {
                 let lines: Vec<Value> = self
@@ -237,7 +266,7 @@ impl Runtime {
                 "board": answer["board"]["id"], "revision": answer["board"]["revision"],
             }));
         }
-        Ok((answer, changed))
+        Ok(BoardTurn::Answered { answer, changed })
     }
 
     /// Board `id`, when the caller's session `own` drew it.

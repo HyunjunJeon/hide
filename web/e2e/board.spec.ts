@@ -83,6 +83,8 @@ test("an agent draws, edits, reads and deletes its board, and another agent's ed
     const secret = await board(["new", "--title", "Secret", "--json", JSON.stringify([{ type: "quote", path: ".env", start: 1, end: 1 }])]);
     expect(secret).toMatchObject({ ok: false, reason: "quote_refused" });
     expect(secret.status).not.toBe(0);
+    // The command refused it by its path (the core's refusal would name `blocks[0].path`).
+    expect(secret.next_action).toContain("(.env: names a credential file");
     // A bad block is refused with the field to fix named.
     const bad = await board(["new", "--title", "Bad", "--json", JSON.stringify([{ type: "table", columns: ["a", "b"], rows: [["1", "2", "3"]] }])]);
     expect(bad).toMatchObject({ ok: false, reason: "board_invalid" });

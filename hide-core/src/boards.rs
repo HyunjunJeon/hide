@@ -264,10 +264,6 @@ pub enum BoardCommand {
 }
 
 impl BoardCommand {
-    pub fn mutates(&self) -> bool {
-        !matches!(self, Self::Show { .. } | Self::List {})
-    }
-
     /// The bounds a daemon checks before the command reaches the core: a
     /// board id where one is named is a key (one an agent could type; the
     /// core answers `board_unknown` for one it does not keep). The title,
@@ -394,17 +390,18 @@ fn check_cell(at: &str, cell: &str) -> Result<String, String> {
 /// checkout's root, as every machine spells it (`/` between names), with no
 /// `..`, and no name of it may be a credential file, a folder named for
 /// secrets or Git's own folder. The rule is the suggestion investigation's
-/// (`readable_path`), so every path a board quotes is one Hide AI may read.
-/// The `hide` command refuses such a path before it reads anything
-/// (`quote_refused`), and the core refuses it again, so a board never
-/// carries a credential past this guard.
-pub fn quote_path_refused(path: &str) -> Option<&'static str> {
+/// (`readable_path`, which this module depends on), so every path a board
+/// quotes is one Hide AI may read. The `hide` command refuses such a path
+/// before it reads anything (`quote_refused`), and the core refuses it
+/// again, so a board never carries a credential past this guard.
+pub fn quote_path_refused(path: &str) -> Option<String> {
     match crate::suggestions::investigation::reads::readable_path(path) {
         Ok(()) => None,
-        Err("credential_file") => Some("names a credential file, a secrets folder or .git"),
-        Err(_) => Some(
-            "is not a path of at most 240 characters below the checkout's root, with / between names and no . or .. names",
-        ),
+        Err("credential_file") => Some("names a credential file, a secrets folder or .git".into()),
+        Err(_) => Some(format!(
+            "is not a path of at most {} characters below the checkout's root, with / between names and no . or .. names",
+            crate::suggestions::policy::READ_PATH_CHARS
+        )),
     }
 }
 

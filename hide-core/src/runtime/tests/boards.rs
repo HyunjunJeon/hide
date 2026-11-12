@@ -21,12 +21,14 @@ fn recipient() -> Actor {
 
 fn run(runtime: &mut Runtime, actor: &Actor, command: Value) -> Result<(Value, bool), String> {
     let command: BoardCommand = serde_json::from_value(command).unwrap();
-    runtime.board_command(
-        crate::node::TEST_NODE,
-        &actor.pane_id,
-        &authority(actor).context,
-        command,
-    )
+    runtime
+        .board_command(
+            crate::node::TEST_NODE,
+            &actor.pane_id,
+            &authority(actor).context,
+            command,
+        )
+        .map(crate::runtime::boards::BoardTurn::answer)
 }
 
 fn ok(runtime: &mut Runtime, actor: &Actor, command: Value) -> Value {
@@ -459,45 +461,6 @@ fn deleting_a_sessions_records_drops_its_boards_and_their_files() {
     assert_eq!(other["boards"].as_array().unwrap().len(), 1);
 }
 
-/// The book holds `BOOK_LIMIT` records, deleted stubs counted; a new board
-/// past it lets the oldest stub go first, file and all.
-#[test]
-fn a_full_book_lets_its_oldest_deleted_board_go_first() {
-    let root = tempfile::tempdir().unwrap();
-    let (runtime, sender, _, _) = fixture(root.path());
-    let mut runtime = runtime.lock().unwrap();
-    for n in 1..=crate::boards::BOOK_LIMIT {
-        ok(
-            &mut runtime,
-            &sender,
-            json!({"verb": "new", "title": "T", "blocks": []}),
-        );
-        ok(
-            &mut runtime,
-            &sender,
-            json!({"verb": "delete", "board": format!("board-{n}")}),
-        );
-    }
-    saved(root.path(), "board-1", 2);
-    let next = ok(
-        &mut runtime,
-        &sender,
-        json!({"verb": "new", "title": "T", "blocks": []}),
-    );
-    assert_eq!(next["board"]["id"], "board-257");
-    let show = |n: u32| json!({"verb": "show", "board": format!("board-{n}")});
-    assert_eq!(
-        run(&mut runtime, &sender, show(1)).unwrap_err(),
-        "board_unknown"
-    );
-    assert_eq!(
-        run(&mut runtime, &sender, show(2)).unwrap_err(),
-        "board_deleted"
-    );
-    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
-    wait_for("the oldest stub's file deleted", || !file.exists());
-}
-
 const SENDER_SESSION: &str = "0b5e7c1a-sender";
 const RECIPIENT_SESSION: &str = "7d2f4e9b-recipient";
 
@@ -560,7 +523,8 @@ fn registration(
 
 /// A mission's Conductor reads the board its worker drew in the worker's
 /// own worktree; an agent that is neither in that checkout nor an ancestor
-/// of the drawing session does not, and reading is all an ancestor does.
+/// of the drawing session does not, a child does not read up into its
+/// parent's board, and reading is all an ancestor does.
 #[test]
 fn a_parent_reads_a_board_its_child_drew_in_another_checkout_and_no_one_else_does() {
     let root = tempfile::tempdir().unwrap();
@@ -575,13 +539,21 @@ fn a_parent_reads_a_board_its_child_drew_in_another_checkout_and_no_one_else_doe
             json!({"verb": "show", "board": "board-1", "json": true}),
         );
         assert_eq!(record["board"]["owner"]["session_id"], SENDER_SESSION);
+        // The parent's own board, board-2.
+        ok(&mut runtime, &recipient(), login_flow());
         saved(root.path(), "board-1", 1);
+        saved(root.path(), "board-2", 1);
     }
-    // The child drew it in a worktree of its own.
-    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
-    let mut board: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-    board["checkout"]["path"] = json!("/checkouts/worker");
-    std::fs::write(&file, serde_json::to_vec(&board).unwrap()).unwrap();
+    // Each was drawn in a worktree of its own.
+    for (id, worktree) in [
+        ("board-1", "/checkouts/worker"),
+        ("board-2", "/checkouts/lead"),
+    ] {
+        let file = hide_kit::layout::board_file(&boards_dir(root.path()), id);
+        let mut board: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        board["checkout"]["path"] = json!(worktree);
+        std::fs::write(&file, serde_json::to_vec(&board).unwrap()).unwrap();
+    }
 
     let (runtime, sender, _, _) = fixture(root.path());
     let mut runtime = runtime.lock().unwrap();
@@ -622,6 +594,170 @@ fn a_parent_reads_a_board_its_child_drew_in_another_checkout_and_no_one_else_doe
         .unwrap_err(),
         "board_not_yours"
     );
+    assert_eq!(
+        run(
+            &mut runtime,
+            &sender,
+            json!({"verb": "show", "board": "board-2"}),
+        )
+        .unwrap_err(),
+        "board_not_yours",
+        "a child reads no board of its parent's"
+    );
+}
+
+/// Writes `boards` into the state folder's board folder, one file each, as
+/// a build that keeps boards writes them.
+fn stored(root: &std::path::Path, boards: impl Iterator<Item = Value>) {
+    let dir = boards_dir(root);
+    std::fs::create_dir_all(&dir).unwrap();
+    for board in boards {
+        let id = board["id"].as_str().unwrap().to_owned();
+        std::fs::write(
+            hide_kit::layout::board_file(&dir, &id),
+            serde_json::to_vec(&board).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+/// Board `n` of `session`, open unless `state` says otherwise, last changed
+/// at `updated`.
+fn stored_board(n: usize, session: &str, state: Value, updated: u64) -> Value {
+    let mut board = json!({
+        "id": format!("board-{n}"),
+        "owner": {"device_id": crate::node::TEST_NODE, "agent": "codex", "session_id": session},
+        "checkout": {"device_id": crate::node::TEST_NODE, "path": "/checkouts/fixture"},
+        "title": format!("Board {n}"), "blocks": [], "next_block": 1, "revision": 1,
+        "created_at_unix_ms": updated, "updated_at_unix_ms": updated,
+    });
+    board
+        .as_object_mut()
+        .unwrap()
+        .extend(state.as_object().unwrap().clone());
+    board
+}
+
+/// Past `BOOK_LIMIT` a new board lets go, one at a time: a deleted stub
+/// first, then a kept board, then the open board updated longest ago whose
+/// session runs in no pane; a board of a session on screen stays, though it
+/// is the oldest of all.
+#[test]
+fn a_full_book_lets_go_a_stub_then_a_kept_board_then_the_oldest_board_of_no_pane() {
+    let root = tempfile::tempdir().unwrap();
+    let open = json!({"state": "open"});
+    let special = [
+        stored_board(1, SENDER_SESSION, open.clone(), 1),
+        stored_board(2, "gone", open.clone(), 5),
+        stored_board(
+            3,
+            "gone",
+            json!({"state": "kept", "kept_path": "docs/boards/b.md", "kept_at_unix_ms": 50}),
+            50,
+        ),
+        stored_board(
+            4,
+            "gone",
+            json!({"state": "deleted", "deleted_by": "agent", "deleted_at_unix_ms": 100}),
+            100,
+        ),
+    ];
+    let rest = (5..=crate::boards::BOOK_LIMIT)
+        .map(|n| stored_board(n, &format!("gone-{n}"), open.clone(), 1000 + n as u64));
+    stored(root.path(), special.into_iter().chain(rest));
+    let (runtime, sender, _, _) = fixture(root.path());
+    let mut runtime = runtime.lock().unwrap();
+    show_rows(&mut runtime);
+    let shown = |runtime: &mut Runtime, n: u32| {
+        run(
+            runtime,
+            &sender,
+            json!({"verb": "show", "board": format!("board-{n}")}),
+        )
+        .err()
+    };
+    let draw = json!({"verb": "new", "title": "T", "blocks": []});
+    for (drawn, gone) in [(257, 4), (258, 3), (259, 2)] {
+        assert_eq!(
+            ok(&mut runtime, &sender, draw.clone())["board"]["id"],
+            format!("board-{drawn}")
+        );
+        assert_eq!(
+            shown(&mut runtime, gone),
+            Some("board_unknown".to_owned()),
+            "board-{gone} went for board-{drawn}"
+        );
+    }
+    assert_eq!(
+        shown(&mut runtime, 1),
+        None,
+        "the session on screen keeps its board"
+    );
+    assert_eq!(shown(&mut runtime, 5), None);
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-2");
+    wait_for("board-2's file deleted", || !file.exists());
+}
+
+/// A book whose every board belongs to a session on screen refuses a new
+/// board rather than let one go.
+#[test]
+fn a_full_book_of_sessions_on_screen_refuses_a_new_board() {
+    let root = tempfile::tempdir().unwrap();
+    stored(
+        root.path(),
+        (1..=crate::boards::BOOK_LIMIT)
+            .map(|n| stored_board(n, RECIPIENT_SESSION, json!({"state": "open"}), n as u64)),
+    );
+    let (runtime, sender, _, _) = fixture(root.path());
+    let mut runtime = runtime.lock().unwrap();
+    show_rows(&mut runtime);
+    let refusal = run(
+        &mut runtime,
+        &sender,
+        json!({"verb": "new", "title": "T", "blocks": []}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        code(&refusal),
+        (
+            "board_limit",
+            Some("Hide keeps 256 boards and each belongs to an agent on screen")
+        )
+    );
+    assert!(hide_kit::layout::board_file(&boards_dir(root.path()), "board-1").exists());
+}
+
+/// Deleting an archived session from the archive takes the boards it drew,
+/// as pruning it does.
+#[test]
+fn deleting_an_archived_session_drops_its_boards() {
+    let root = tempfile::tempdir().unwrap();
+    let (runtime, sender, _, _) = fixture(root.path());
+    let mut runtime = runtime.lock().unwrap();
+    ok(&mut runtime, &recipient(), login_flow());
+    ok(&mut runtime, &sender, login_flow());
+    crate::runtime::delivery::tests::archive_holding(
+        &mut runtime,
+        &recipient(),
+        "/checkouts/fixture",
+    );
+    for record in runtime
+        .snapshot
+        .ui_state
+        .session_archive
+        .records
+        .values_mut()
+    {
+        record.deleting = true;
+    }
+    let saved = runtime.snapshot.ui_state.session_archive.clone();
+    assert!(runtime.ingest_archive_saved(&saved, true));
+    let show = |n: u32| json!({"verb": "show", "board": format!("board-{n}")});
+    assert_eq!(
+        run(&mut runtime, &sender, show(1)).unwrap_err(),
+        "board_unknown"
+    );
+    assert!(run(&mut runtime, &sender, show(2)).is_ok());
 }
 
 #[test]

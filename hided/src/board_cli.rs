@@ -54,12 +54,18 @@ pub enum Source {
     Json(String),
 }
 
+/// A flag's value: not empty, not another flag, and one line, except a
+/// `--json` document, which may be written on several lines.
 fn value<'a>(args: &'a [String], at: usize, flag: &str) -> Result<&'a str, String> {
     let value = args
         .get(at + 1)
         .map(String::as_str)
         .ok_or_else(|| format!("{flag} needs a value"))?;
-    if value.starts_with("--") || value.is_empty() || value.chars().any(char::is_control) {
+    let layout = |c: char| flag == "--json" && matches!(c, '\n' | '\r' | '\t');
+    if value.starts_with("--")
+        || value.trim().is_empty()
+        || value.chars().any(|c| c.is_control() && !layout(c))
+    {
         return Err(format!("{flag} needs a value"));
     }
     Ok(value)
@@ -353,16 +359,26 @@ fn read_lines(root: &Path, path: &str, start: u64, end: u64) -> Result<Vec<Strin
             format!("{path}: leads to a file that {why}"),
         ));
     }
-    let metadata = std::fs::metadata(&target).map_err(|error| unreadable(error.to_string()))?;
-    if !metadata.is_file() {
+    let file = std::fs::File::open(&target).map_err(|error| unreadable(error.to_string()))?;
+    if !file
+        .metadata()
+        .map_err(|error| unreadable(error.to_string()))?
+        .is_file()
+    {
         return Err(unreadable("is not a file".into()));
     }
-    if metadata.len() > QUOTE_FILE_BYTES {
+    // Read to the cap and one byte past it, never the whole of a larger file.
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(file, QUOTE_FILE_BYTES + 1),
+        &mut bytes,
+    )
+    .map_err(|error| unreadable(error.to_string()))?;
+    if bytes.len() as u64 > QUOTE_FILE_BYTES {
         return Err(unreadable(format!(
             "is larger than {QUOTE_FILE_BYTES} bytes"
         )));
     }
-    let bytes = std::fs::read(&target).map_err(|error| unreadable(error.to_string()))?;
     let text = String::from_utf8(bytes).map_err(|_| unreadable("is not UTF-8 text".into()))?;
     let lines: Vec<&str> = text.lines().collect();
     if end as usize > lines.len() {
@@ -541,6 +557,21 @@ mod tests {
             parse(words(&["new", "--title", "T", "--file", "b", "--json", "[]"]).iter()).is_err()
         );
         assert!(parse(words(&["new", "--title", "T", "--json", "[oops"]).iter()).is_err());
+        // A JSON document may be written on several lines; a title may not.
+        assert!(
+            parse(
+                words(&[
+                    "new",
+                    "--title",
+                    "T",
+                    "--json",
+                    "[\n  {\"type\": \"divider\"}\n]"
+                ])
+                .iter()
+            )
+            .is_ok()
+        );
+        assert!(parse(words(&["new", "--title", "T\nU", "--json", "[]"]).iter()).is_err());
     }
 
     #[test]
@@ -624,6 +655,17 @@ mod tests {
             check_quote_paths(&mut env).unwrap_err().code,
             "quote_refused"
         );
+        // Refused by its name before anything is read: a credential file that
+        // is not there is refused, not unreadable.
+        let mut absent = quote("keys/deploy.pem", 1, 1);
+        let refusal = fill_quotes(&mut absent, &root).unwrap_err();
+        assert_eq!(
+            (refusal.code, refusal.detail.as_str()),
+            (
+                "quote_refused",
+                "keys/deploy.pem: names a credential file, a secrets folder or .git"
+            )
+        );
         assert_eq!(
             fill_quotes(&mut env, &root).unwrap_err().code,
             "quote_refused"
@@ -645,7 +687,22 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    /// A link at `at` to the file `target`; false where the account may not
+    /// make one (Windows without Developer Mode or the privilege).
+    fn link(target: &Path, at: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, at).expect("the link is made");
+            true
+        }
+        // Windows refuses a link to an account without the privilege
+        // (error 1314), which a runner may or may not have.
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, at).is_ok()
+        }
+    }
+
     #[test]
     fn a_link_that_leads_out_or_to_a_credential_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -653,8 +710,12 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(dir.path().join("outside.rs"), "far\n").unwrap();
         std::fs::write(root.join(".env"), "TOKEN=secret\n").unwrap();
-        std::os::unix::fs::symlink(dir.path().join("outside.rs"), root.join("out.rs")).unwrap();
-        std::os::unix::fs::symlink(root.join(".env"), root.join("config.txt")).unwrap();
+        if !link(&dir.path().join("outside.rs"), &root.join("out.rs"))
+            || !link(&root.join(".env"), &root.join("config.txt"))
+        {
+            eprintln!("skipped: this account may not make links");
+            return;
+        }
         let mut out = quote("out.rs", 1, 1);
         assert_eq!(
             fill_quotes(&mut out, &root).unwrap_err().code,
