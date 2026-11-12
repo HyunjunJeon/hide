@@ -10,6 +10,7 @@ import { changedBlocks, calloutBody, quoteBody, quoteCaption, type BoardBlock, t
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Separator } from "./components/ui/separator";
+import { Hint } from "./components/ui/tooltip";
 import { useElapsed } from "./components/elapsed";
 import { FileMark } from "./components/file-mark";
 import { StateBox, type StateBoxTone } from "./components/state-box";
@@ -33,8 +34,9 @@ const BADGE: Record<BoardCalloutTone, string> = { info: "", decision: "bg-agent-
 const NONE: ReadonlySet<string> = new Set();
 
 /**
- * The smallest a diagram is drawn, against its natural width: Mermaid's labels
- * at this scale are about the board's text size. A lane narrower than that
+ * The smallest a diagram is drawn, against its natural width at the default
+ * text size: Mermaid's labels at this scale are about the board's text size,
+ * and they grow with the interface text size as the text does. A lane narrower than that
  * scrolls the diagram sideways in its own box instead of shrinking it unread.
  */
 const DIAGRAM_MIN_SCALE = 0.8;
@@ -112,7 +114,9 @@ function BoardHead({ title, updatedAt, controls, opener }: { title: string; upda
   const updated = useElapsed(updatedAt);
   return (
     <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-caption text-subtle-foreground" data-board-head="true">
-      <h2 className="min-w-0 flex-1 truncate text-body font-semibold text-foreground" data-board-title="true">{title}</h2>
+      <Hint label={title} reveals>
+        <h2 className="min-w-0 flex-1 truncate text-body font-semibold text-foreground" data-board-title="true">{title}</h2>
+      </Hint>
       {updated ? <span className="shrink-0 text-muted-foreground" data-board-updated="true">{updated}</span> : null}
       {controls}
       {opener}
@@ -183,7 +187,7 @@ function DiagramFrame({ children }: { children: ReactNode }) {
       // Mermaid writes the natural width as the picture's `max-width`.
       for (const svg of root.querySelectorAll<SVGSVGElement>("[data-markdown-diagram] svg")) {
         const natural = svg.style.maxWidth;
-        if (natural && natural !== "100%") svg.style.minWidth = `calc(${natural} * ${DIAGRAM_MIN_SCALE})`;
+        if (natural && natural !== "100%") svg.style.minWidth = `calc(${natural} * ${DIAGRAM_MIN_SCALE} * var(--interface-scale, 1))`;
       }
     };
     hold();

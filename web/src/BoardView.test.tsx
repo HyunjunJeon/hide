@@ -11,14 +11,16 @@ import { referenceBoard } from "./gallery/boardSceneData";
 // The shell imports xterm, whose canvas API is absent from jsdom.
 vi.hoisted(() => { HTMLCanvasElement.prototype.getContext = () => null; });
 
-// Mermaid needs a page's colours and layout, which jsdom has not: it stands
-// in with Mermaid's two answers, a picture, or the failure the fixture's
-// unreadable diagram gets.
-vi.mock("./markdownMermaid", async (actual) => ({
-  ...(await actual<typeof import("./markdownMermaid")>()),
-  drawMermaid: (source: string) => Promise.resolve(source.trimEnd().endsWith("B[")
-    ? { kind: "failed", reason: "Parse error on line 3" }
-    : { kind: "svg", svg: '<svg style="max-width: 40em"></svg>' }),
+// Mermaid needs a page's colours and layout, which jsdom has not: the library
+// stands in with its two answers, a picture at its natural width, or the parse
+// failure the fixture's unreadable diagram gets.
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: () => undefined,
+    render: (_id: string, source: string) => source.trimEnd().endsWith("B[")
+      ? Promise.reject(new Error("Parse error on line 3:\n--> B["))
+      : Promise.resolve({ svg: '<svg style="max-width: 40em"></svg>' }),
+  },
 }));
 
 const NOW = 1_794_000_000_000;
@@ -99,7 +101,7 @@ describe("BoardView", () => {
     await draw(referenceBoard(NOW));
     // A narrow lane scrolls the picture rather than shrinking it below its labels' size.
     const picture = container.querySelector<SVGSVGElement>('[data-board-block="b8"] [data-markdown-diagram="mermaid"] svg');
-    expect(picture?.style.minWidth).toBe("calc(40em * 0.8)");
+    expect(picture?.style.minWidth).toBe("calc(40em * 0.8 * var(--interface-scale, 1))");
     const unreadable = container.querySelector('[data-board-block="b10"]');
     expect(unreadable?.querySelector("[data-markdown-diagram]")).toBeNull();
     expect(unreadable?.textContent).toContain("Diagram not drawn: Parse error on line 3");
