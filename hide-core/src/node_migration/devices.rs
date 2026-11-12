@@ -37,9 +37,9 @@ use serde_json::{Map, Value};
 
 use super::reown::{self, Change, IdTable};
 use super::{
-    BACKUP_DIR, Backup, COMPOSER_MARKS, CORE_STATE, DELIVERY_LEDGER, HOOK_FACTS, KEYS, LABELS,
-    LINKS, LOCAL_ISSUES, MISSIONS, Moves, PROJECT_MEMORY, Refusal, SESSION_SEARCH, WORKSPACE_VIEWS,
-    mission_files, read_json, write,
+    BACKUP_DIR, BOARDS, Backup, COMPOSER_MARKS, CORE_STATE, DELIVERY_LEDGER, HOOK_FACTS, KEYS,
+    LABELS, LINKS, LOCAL_ISSUES, MISSIONS, Moves, PROJECT_MEMORY, Refusal, SESSION_SEARCH,
+    WORKSPACE_VIEWS, board_files, mission_files, read_json, write,
 };
 use crate::address::{Kind, Scoped};
 use crate::node::NodeId;
@@ -296,6 +296,8 @@ struct Stores {
     json: BTreeMap<&'static str, Value>,
     /// Each mission's file in the mission folder, keyed as `MISSIONS`.
     missions: Vec<(String, Value)>,
+    /// Each board's file in the board folder, keyed as `BOARDS`.
+    boards: Vec<(String, Value)>,
     /// The Project roots each device has in Project Memory, or why the
     /// store does not open, which holds every device: its Projects could
     /// not follow it.
@@ -317,12 +319,20 @@ impl Stores {
             }
         }
         let mut missions = Vec::new();
+        let mut boards = Vec::new();
         if json {
             let files = mission_files(state_dir)
                 .map_err(|reason| refuse(&state_dir.join(super::MISSIONS_DIR), reason))?;
             for (name, path) in files {
                 if let Some(value) = read_json(&path).map_err(|reason| refuse(&path, reason))? {
                     missions.push((name, value));
+                }
+            }
+            let files =
+                board_files(state_dir).map_err(|reason| refuse(&state_dir.join(BOARDS), reason))?;
+            for (name, path) in files {
+                if let Some(value) = read_json(&path).map_err(|reason| refuse(&path, reason))? {
+                    boards.push((name, value));
                 }
             }
         }
@@ -358,6 +368,7 @@ impl Stores {
         Ok(Self {
             json: stores,
             missions,
+            boards,
             memory,
             links,
             link_roots,
@@ -486,9 +497,19 @@ fn check(
         registrations: registrations.clone(),
         checkouts: BTreeMap::new(),
     };
-    for (name, value) in &stores.missions {
+    for (file, name, value) in stores
+        .missions
+        .iter()
+        .map(|(name, value)| (MISSIONS, name, value))
+        .chain(
+            stores
+                .boards
+                .iter()
+                .map(|(name, value)| (BOARDS, name, value)),
+        )
+    {
         let mut value = value.clone();
-        rename_store(MISSIONS, &mut value, renames, &ids, named)
+        rename_store(file, &mut value, renames, &ids, named)
             .map_err(|reason| format!("{name}: {reason}"))?;
     }
     for (file, value) in &stores.json {
@@ -725,7 +746,7 @@ fn apply_steps(
             if !next() {
                 return Ok(());
             }
-            rename_mission_files(state_dir, &backup, renames, &ids, &journal.named, outcome)?;
+            rename_folder_files(state_dir, &backup, renames, &ids, &journal.named, outcome)?;
             if !next() {
                 return Ok(());
             }
@@ -755,8 +776,9 @@ fn apply_steps(
 }
 
 /// Renames every key of each mission's file in the mission folder, keyed
-/// as `MISSIONS`, keeping each original it changes once in the backup.
-fn rename_mission_files(
+/// as `MISSIONS`, and of each board's file in the board folder, keyed as
+/// `BOARDS`, keeping each original it changes once in the backup.
+fn rename_folder_files(
     state_dir: &Path,
     backup: &Backup,
     renames: &BTreeMap<String, String>,
@@ -764,14 +786,20 @@ fn rename_mission_files(
     named: &[String],
     outcome: &mut DeviceNames,
 ) -> Result<(), Refusal> {
-    let files = mission_files(state_dir)
-        .map_err(|reason| refuse(&state_dir.join(super::MISSIONS_DIR), reason))?;
-    for (name, path) in files {
+    let missions = mission_files(state_dir)
+        .map_err(|reason| refuse(&state_dir.join(super::MISSIONS_DIR), reason))?
+        .into_iter()
+        .map(|(name, path)| (MISSIONS, name, path));
+    let boards = board_files(state_dir)
+        .map_err(|reason| refuse(&state_dir.join(BOARDS), reason))?
+        .into_iter()
+        .map(|(name, path)| (BOARDS, name, path));
+    for (file, name, path) in missions.chain(boards) {
         let Some(mut value) = read_json(&path).map_err(|reason| refuse(&path, reason))? else {
             continue;
         };
         let before = value.clone();
-        rename_store(MISSIONS, &mut value, renames, ids, named)
+        rename_store(file, &mut value, renames, ids, named)
             .map_err(|reason| refuse(&path, reason))?;
         if value == before {
             continue;
@@ -1454,6 +1482,40 @@ mod tests {
             assert_eq!(mission["conductor"]["actor"]["device_id"], MACHINE);
             assert_eq!(mission["conductor"]["session"]["device_id"], MACHINE);
         }
+        assert_eq!(
+            name_devices(state, &node()).unwrap(),
+            DeviceNames::default()
+        );
+    }
+
+    /// Each board's file moves under the same machine-id rewrite as a
+    /// mission's; its index names no machine.
+    #[test]
+    fn board_files_follow_a_device_rename() {
+        let dir = folder();
+        let state = dir.path();
+        let folder = hide_kit::layout::boards_dir(state);
+        std::fs::create_dir(&folder).unwrap();
+        write_json(
+            &folder,
+            "board-1.json",
+            json!({
+                "id": "board-1",
+                "owner": {"device_id": ALIAS, "agent": "claude", "session_id": "s1"},
+                "checkout": {"device_id": ALIAS, "path": "/srv/app"},
+                "title": "Login flow", "blocks": [], "next_block": 1, "revision": 1,
+                "created_at_unix_ms": 1, "updated_at_unix_ms": 1, "state": "open",
+            }),
+        );
+        name_devices(state, &node()).unwrap();
+        let board = read(&folder, "board-1.json");
+        assert_eq!(
+            (
+                &board["owner"]["device_id"],
+                &board["checkout"]["device_id"]
+            ),
+            (&json!(MACHINE), &json!(MACHINE))
+        );
         assert_eq!(
             name_devices(state, &node()).unwrap(),
             DeviceNames::default()

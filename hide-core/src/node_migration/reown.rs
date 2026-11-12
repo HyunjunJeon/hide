@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{
-    CORE_STATE, DELIVERY_LEDGER, KEYS, LABELS, LINKS, LOCAL_ISSUES, MARKER_FILE, MARKER_VERSION,
-    MISSIONS, MISSIONS_DIR, Marker, Moves, PROJECT_MEMORY, Refusal, SESSION_SEARCH,
-    WORKSPACE_VIEWS, mission_files, read_json, read_marker, write,
+    BOARDS, CORE_STATE, DELIVERY_LEDGER, KEYS, LABELS, LINKS, LOCAL_ISSUES, MARKER_FILE,
+    MARKER_VERSION, MISSIONS, MISSIONS_DIR, Marker, Moves, PROJECT_MEMORY, Refusal, SESSION_SEARCH,
+    WORKSPACE_VIEWS, board_files, mission_files, read_json, read_marker, write,
 };
 use crate::node::NodeId;
 
@@ -240,7 +240,12 @@ pub fn reown(staging: &Path, change: &OwnerChange, ids: &IdTable) -> Result<Reow
         .map_err(|reason| refuse(&staging.join(MISSIONS_DIR), reason))?
         .into_iter()
         .map(|(name, path)| (MISSIONS, name, path));
-    for (file, name, path) in stores.chain(missions) {
+    // Each board's file, by the board rows.
+    let boards = board_files(staging)
+        .map_err(|reason| refuse(&staging.join(BOARDS), reason))?
+        .into_iter()
+        .map(|(name, path)| (BOARDS, name, path));
+    for (file, name, path) in stores.chain(missions).chain(boards) {
         let Some(mut value) = read_json(&path).map_err(|reason| refuse(&path, reason))? else {
             continue;
         };
@@ -1986,6 +1991,59 @@ mod tests {
             ));
             assert_eq!(&body["missions"][0], mission);
         }
+    }
+
+    /// A board's file in the board folder (`hide board`), as a build with
+    /// node ids writes it.
+    fn board_file(n: u32, device: &str, path: &str) -> Value {
+        json!({
+            "id": format!("board-{n}"),
+            "owner": {"device_id": device, "agent": "claude", "session_id": format!("s{n}")},
+            "checkout": {"device_id": device, "path": path},
+            "title": "Login flow", "blocks": [], "next_block": 1, "revision": 1,
+            "created_at_unix_ms": 1, "updated_at_unix_ms": 1, "state": "open",
+        })
+    }
+
+    /// A core move rekeys each board's file as it does a mission's: a board
+    /// drawn on the machine the core moves to takes its node id, one drawn
+    /// on the old owner keeps it, and the index, which names no machine,
+    /// stays as it was. No release writes boards yet, so this hand fixture
+    /// stands in for the released folder `upgrade_tests` would read.
+    #[test]
+    fn board_files_follow_the_core_owner() {
+        let dir = macbook_folder();
+        let state = dir.path();
+        let folder = hide_kit::layout::boards_dir(state);
+        std::fs::create_dir(&folder).unwrap();
+        let write = |name: &str, value: Value| {
+            std::fs::write(folder.join(name), serde_json::to_vec(&value).unwrap()).unwrap();
+        };
+        write("board-1.json", board_file(1, ALIAS, C_ROOT));
+        write("board-2.json", board_file(2, M, M_ROOT));
+        let index = json!({"schema_version": 1, "next": 3, "boards": [
+            {"id": "board-1", "state": "open", "updated_at_unix_ms": 1},
+            {"id": "board-2", "state": "open", "updated_at_unix_ms": 1},
+        ]});
+        write("index.json", index.clone());
+        reown(state, &forward(), &forward_ids()).unwrap();
+        let moved = read(&folder.join("board-1.json"));
+        assert_eq!(
+            (
+                &moved["owner"]["device_id"],
+                &moved["checkout"]["device_id"],
+                &moved["checkout"]["path"]
+            ),
+            (&json!(C), &json!(C), &json!(C_ROOT))
+        );
+        let own = read(&folder.join("board-2.json"));
+        assert_eq!(
+            (&own["owner"]["device_id"], &own["checkout"]["device_id"]),
+            (&json!(M), &json!(M))
+        );
+        assert_eq!(read(&folder.join("index.json")), index);
+        let board: crate::boards::Board = serde_json::from_value(moved).unwrap();
+        assert_eq!(board.owner.session_id, "s1");
     }
 
     #[test]

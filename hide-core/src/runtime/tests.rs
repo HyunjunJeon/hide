@@ -40,6 +40,7 @@ mod beside_spawn;
 mod birth_cwd;
 #[path = "tests/blocked_children.rs"]
 mod blocked_children;
+mod boards;
 mod checkout_git;
 mod closed_registrations;
 #[path = "tests/control_order.rs"]

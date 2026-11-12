@@ -872,6 +872,27 @@ impl Core {
         Ok(turn)
     }
 
+    /// Runs a `hide board` command: one change under the lock, written by
+    /// the board folder's save thread off it (`board_store.rs`). Only a
+    /// command that changed a board announces a change.
+    pub fn board_command(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        command: crate::boards::BoardCommand,
+    ) -> Result<serde_json::Value, String> {
+        if !check_owner_thread(self, "board.command") {
+            return Err("board_store_unavailable".into());
+        }
+        let (answer, changed) =
+            lock_recover(&self.runtime).board_command(device, caller, expected, command)?;
+        if changed {
+            notify_change(self);
+        }
+        Ok(answer)
+    }
+
     /// The plan and mission summary the prompt hook keeps for `caller`'s
     /// pane (PRD hide-plan D-30); none for a caller in no pane.
     pub fn plan_context(

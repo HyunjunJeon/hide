@@ -23,6 +23,7 @@ mod attachments;
 mod backlog;
 mod base_push;
 mod blocked_children;
+mod boards;
 mod branch_card;
 mod branch_decision;
 mod checkout_git;
@@ -1204,6 +1205,9 @@ pub struct Runtime {
     /// (`missions.rs`, PRD software-factory-conductor D-22).
     missions: missions::MissionRuntime,
     plans: plans::PlanRuntime,
+    /// The boards agents draw with `hide board` and the folder that keeps
+    /// them (`boards.rs`, `board_store.rs`), read when the runtime is made.
+    boards: boards::BoardRuntime,
     /// The agent versions whose composer was checked against its
     /// declaration (`composer_checks.rs`), and the store that keeps them.
     composer_checks: Vec<crate::composer_checks::Check>,
@@ -2411,6 +2415,11 @@ impl Runtime {
             composer_store: None,
             missions: missions::MissionRuntime::default(),
             plans: plans::PlanRuntime::default(),
+            boards: boards::BoardRuntime::restore(
+                state_path
+                    .parent()
+                    .filter(|directory| !directory.as_os_str().is_empty()),
+            ),
             composer_checks: Vec::new(),
             composer_checks_store: None,
             delivery_overflow: HashSet::new(),
