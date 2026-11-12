@@ -492,6 +492,7 @@ The old file stays byte-for-byte as it was and is never written again by the new
 A downgrade reads that migration snapshot and sees none of the later missions; on upgrading again the index remains authoritative, so missions created or changed by the downgraded build in `missions.json` are not imported.
 Keep the old file if a downgrade may be needed; removing the index alone is not a way to combine the two histories.
 The older `missions.v1.json`, `missions.v2.json` and `missions.v3.json` copies retain their existing schema-conversion role.
+Boards an agent draws with `hide board` are kept in `~/.hide/state/boards/board-<n>.json`, one board per file, beside `boards/index.json` with the next id and one line per board (`hide_kit::layout`); a build that does not know boards never reads the folder, and `links.sqlite3` and `workspace-views.json` keep their schemas.
 
 Every folder Hide makes there is private to your account (0700; on Windows an access list naming only your account).
 When a build has product statistics configured, the state folder also holds `product-analytics-id`, a private random installation UUID unrelated to account or hardware identity.

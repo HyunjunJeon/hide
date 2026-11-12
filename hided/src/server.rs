@@ -1623,6 +1623,8 @@ enum ScopedRequest {
     Mission(Box<hide_core::missions::MissionCommand>),
     /// `hide task`: the caller's session's own plan, the core's record.
     Plan(hide_core::plans::PlanCommand),
+    /// `hide board`: the caller's session's boards, the core's record.
+    Board(hide_core::boards::BoardCommand),
     /// `hide agent catalog`: what a machine's agents take, read from the
     /// core's own reports.
     AgentCatalog(Option<String>),
@@ -1671,6 +1673,7 @@ impl ScopedRequest {
                 | Self::MemoryHook(..)
                 | Self::Mission(..)
                 | Self::Plan(..)
+                | Self::Board(..)
                 | Self::AgentCatalog(..)
                 | Self::AgentProfile(..)
                 | Self::Ps { .. }
@@ -1790,6 +1793,12 @@ async fn scoped_client_loop(
                         .ok()
                         .filter(hide_core::plans::PlanCommand::valid)
                         .map(ScopedRequest::Plan),
+                        Some("board") => serde_json::from_value::<hide_core::boards::BoardCommand>(
+                            value["command"].clone(),
+                        )
+                        .ok()
+                        .filter(hide_core::boards::BoardCommand::valid)
+                        .map(ScopedRequest::Board),
                         Some("agent_profile") => serde_json::from_value::<
                             hide_core::agent_profiles::ProfileCommand,
                         >(value["command"].clone())
@@ -1861,12 +1870,14 @@ async fn scoped_client_loop(
                             .map(|path| ScopedRequest::ProjectOpen(path.to_owned())),
                         _ => None,
                     };
-                    // A plan carries its whole node list, so a mission
-                    // command may use the frame's full size like a letter.
+                    // A plan carries its whole node list, and a board its
+                    // blocks, so a mission, plan or board command may use
+                    // the frame's full size like a letter.
                     if command.is_none()
                         || (value["type"] != "delivery"
                             && value["type"] != "mission"
                             && value["type"] != "plan"
+                            && value["type"] != "board"
                             && value["type"] != "pane"
                             && text.len() > 16 * 1024)
                         || request_id.is_empty()
@@ -2005,6 +2016,15 @@ async fn scoped_client_loop(
                                     core.plan(&cap.context.device_id, &cap.pane_id, &cap.context, command)
                                         .map_err(|code| {
                                             let next = hide_core::plans::next_action(
+                                                hide_core::coordination::split_refusal(&code).0,
+                                            );
+                                            (code, next)
+                                        })?
+                                }
+                                ScopedRequest::Board(command) => {
+                                    core.board(&cap.context.device_id, &cap.pane_id, &cap.context, command)
+                                        .map_err(|code| {
+                                            let next = hide_core::boards::next_action(
                                                 hide_core::coordination::split_refusal(&code).0,
                                             );
                                             (code, next)

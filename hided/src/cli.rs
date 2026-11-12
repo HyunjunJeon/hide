@@ -28,6 +28,8 @@ pub enum CommandKind {
     /// `hide mission …`: a Conductor's mission (PRD software-factory-conductor).
     Mission(crate::mission_cli::MissionCli),
     Plan(crate::plan_cli::PlanCli),
+    /// `hide board …`: an agent's boards.
+    Board(crate::board_cli::BoardCli),
     /// `hide agent profile …` (PRD agent-profiles D-33).
     AgentProfile(hide_core::agent_profiles::ProfileCommand),
     /// `hide agent catalog [--machine <id>]`.
@@ -193,6 +195,7 @@ fn topic_usage(topic: &str) -> Option<String> {
         "device" => usage(crate::device_cli::USAGE),
         "mission" => usage(crate::mission_cli::USAGE),
         "task" => usage(crate::plan_cli::USAGE),
+        "board" => usage(crate::board_cli::USAGE),
         "links" => LINKS_USAGE.to_owned(),
         "session" => usage(crate::session_cli::USAGE),
         "memory" => MEMORY_USAGE.to_owned(),
@@ -233,6 +236,7 @@ fn help_text() -> String {
         crate::device_cli::USAGE,
         crate::mission_cli::USAGE,
         crate::plan_cli::USAGE,
+        crate::board_cli::USAGE,
         crate::pane_cli::USAGE,
         "hide workspace info",
         FILE_USAGE.trim_start_matches("usage: "),
@@ -306,7 +310,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         args.get(1).map(String::as_str),
         args.last().filter(|_| args.len() > 2).map(String::as_str),
     ) && !(args[2..] == ["spawn", "--help"]
-        || (matches!(topic, "mission" | "task") && args.len() == 3))
+        || (matches!(topic, "mission" | "task" | "board") && args.len() == 3))
         && let Some(text) = topic_usage(topic)
     {
         return Ok(CommandKind::Usage(text));
@@ -442,6 +446,16 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             crate::plan_cli::parse(iter)
                 .map(CommandKind::Plan)
                 .map_err(|reason| wrong(reason, crate::plan_cli::USAGE))
+        }
+        Some("board") if matches!(args.get(2).map(String::as_str), Some("help" | "--help")) => {
+            crate::board_cli::parse(args[2..].iter()).map(CommandKind::Board)
+        }
+        Some("board") => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", usage(crate::board_cli::USAGE)))?;
+            crate::board_cli::parse(iter)
+                .map(CommandKind::Board)
+                .map_err(|reason| wrong(reason, crate::board_cli::USAGE))
         }
         Some("agent") => {
             crate::cli_contract::admit(&args[1..])
@@ -860,6 +874,10 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         print!("{}", crate::plan_cli::HELP);
         return Ok(());
     }
+    if kind == CommandKind::Board(crate::board_cli::BoardCli::Help) {
+        print!("{}", crate::board_cli::HELP);
+        return Ok(());
+    }
     if kind == CommandKind::BrowserHelp {
         print!("{}", crate::browser_page::HELP);
         return Ok(());
@@ -883,6 +901,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::AgentSpawnBriefFile { .. }
                     | CommandKind::Mission(_)
                     | CommandKind::Plan(_)
+                    | CommandKind::Board(_)
                     | CommandKind::AgentCatalog { .. }
                     | CommandKind::AgentProfile(_)
                     | CommandKind::Ps(_)
@@ -921,6 +940,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
     match kind {
         CommandKind::Mission(command) => crate::mission_cli::run(&env, command),
         CommandKind::Plan(command) => crate::plan_cli::run(&env, command),
+        CommandKind::Board(command) => crate::board_cli::run(&env, command),
         CommandKind::AgentCatalog { machine } => crate::mission_cli::run_catalog(&env, machine),
         CommandKind::AgentProfile(command) => crate::profile_cli::run(&env, command),
         CommandKind::Ps(options) => crate::ps_cli::run(&env, &options),

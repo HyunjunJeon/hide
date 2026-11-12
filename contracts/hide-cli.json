@@ -1610,6 +1610,43 @@
             "title": "AskHumanAnswer",
             "type": "object"
         },
+        "board": {
+            "properties": {
+                "board": {
+                    "type": "object"
+                }
+            },
+            "required": [
+                "board"
+            ],
+            "type": "object"
+        },
+        "board_list": {
+            "properties": {
+                "boards": {
+                    "type": "object"
+                }
+            },
+            "required": [
+                "boards"
+            ],
+            "type": "object"
+        },
+        "board_shown": {
+            "properties": {
+                "board": {
+                    "type": "object"
+                },
+                "markdown": {
+                    "type": "object"
+                }
+            },
+            "required": [
+                "board",
+                "markdown"
+            ],
+            "type": "object"
+        },
         "confirmed": {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "description": "`hide inbox --confirm`.",
@@ -6665,13 +6702,258 @@
             ],
             "repeats_at_most": null,
             "rest": null
+        },
+        {
+            "answers": [
+                "board"
+            ],
+            "arguments": [],
+            "command": "board new",
+            "options": [
+                {
+                    "name": "--title",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "conflicts": [
+                        "--json"
+                    ],
+                    "name": "--file",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "conflicts": [
+                        "--file"
+                    ],
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "json"
+                    }
+                }
+            ],
+            "refusals": [
+                "board_invalid",
+                "board_too_large",
+                "board_limit",
+                "board_session_unknown",
+                "board_store_unavailable",
+                "quote_refused",
+                "quote_unreadable"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "board"
+            ],
+            "arguments": [
+                {
+                    "name": "board",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "board set",
+            "options": [
+                {
+                    "conflicts": [
+                        "--json"
+                    ],
+                    "name": "--file",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "conflicts": [
+                        "--file"
+                    ],
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "json"
+                    }
+                },
+                {
+                    "name": "--title",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--revision",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "unsigned"
+                    }
+                }
+            ],
+            "refusals": [
+                "board_invalid",
+                "board_too_large",
+                "board_unknown",
+                "board_not_yours",
+                "board_deleted",
+                "board_kept",
+                "board_moved",
+                "quote_refused",
+                "quote_unreadable"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "board"
+            ],
+            "arguments": [
+                {
+                    "name": "board",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "board edit",
+            "options": [
+                {
+                    "conflicts": [
+                        "--json"
+                    ],
+                    "name": "--file",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "conflicts": [
+                        "--file"
+                    ],
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "json"
+                    }
+                },
+                {
+                    "name": "--revision",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "unsigned"
+                    }
+                }
+            ],
+            "refusals": [
+                "board_invalid",
+                "board_too_large",
+                "board_unknown",
+                "board_not_yours",
+                "board_deleted",
+                "board_kept",
+                "board_moved",
+                "quote_refused",
+                "quote_unreadable"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "board_shown",
+                "board",
+                "board_list"
+            ],
+            "arguments": [
+                {
+                    "name": "board",
+                    "required": false,
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "board show",
+            "options": [
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "refusals": [
+                "board_unknown",
+                "board_not_yours",
+                "board_deleted"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "board_list"
+            ],
+            "arguments": [],
+            "command": "board list",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "board"
+            ],
+            "arguments": [
+                {
+                    "name": "board",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "board delete",
+            "options": [],
+            "refusals": [
+                "board_unknown",
+                "board_not_yours",
+                "board_deleted"
+            ],
+            "repeats_at_most": null,
+            "rest": null
         }
     ],
-    "digest": "sha256:f2126ca5cc4c604df701b25a7cd2ad3cdec2925e23cee1f9470b3a94c32df500",
+    "digest": "sha256:a954b9578e0fcd7faa709fe482e98ad5d73b1ffc7e897694dc37f8148111806c",
     "envelopes": {
         "agent": {
             "answer": "value",
             "code": "error.code",
+            "ok": "ok"
+        },
+        "board": {
+            "answer": "result",
+            "code": "reason",
             "ok": "ok"
         },
         "device": {
@@ -6725,7 +7007,7 @@
         "approval": "not blank, at most 256 bytes, no control characters",
         "body": "not blank, at most 16384 bytes",
         "commit": "7 to 64 hexadecimal digits",
-        "json": "a JSON document of the shape hide mission help or hide task help shows",
+        "json": "a JSON document of the shape hide mission help, hide task help or hide board help shows",
         "key": "non-empty, at most 256 bytes, no control characters, does not start with -",
         "one_of": "one of the listed values",
         "paste_text": "non-empty, at most 16384 bytes, no control characters but line breaks (LF, CR) and tabs",

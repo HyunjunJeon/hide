@@ -234,6 +234,34 @@
     "line": "Shows an agent's plan, with the status of each of its steps.",
     "example": "hide task show"
   },
+  "board help": {
+    "line": "Prints the guide for drawing a board for the operator: the blocks, their fields and the limits.",
+    "example": "hide board help"
+  },
+  "board new": {
+    "line": "Draws a board for the operator from a file of blocks: explanations, decisions, tables, code, quoted lines of a file and a diagram.",
+    "example": "hide board new --title \"Login flow\" --file board.json"
+  },
+  "board set": {
+    "line": "Replaces every block of one of your boards, and its title with --title, keeping the board's id.",
+    "example": "hide board set board-1 --file board.json"
+  },
+  "board edit": {
+    "line": "Changes one of your boards block by block: insert, update, replace, remove or move, all of them or none.",
+    "example": "hide board edit board-1 --file edits.json"
+  },
+  "board show": {
+    "line": "Prints a board as Markdown, or with --json its record; without an id, every board of your session.",
+    "example": "hide board show board-1"
+  },
+  "board list": {
+    "line": "Lists your session's boards, each with its state and revision.",
+    "example": "hide board list"
+  },
+  "board delete": {
+    "line": "Deletes one of your own boards for good.",
+    "example": "hide board delete board-1"
+  },
   "pane read": {
     "line": "Prints the last lines of a pane, unwrapped, so you can see what its program last showed.",
     "example": "hide pane read w1:p2 --lines 20"

@@ -1271,6 +1271,17 @@ Its section "A merge the plan leaves to the operator" owns per-node merge owners
 
 Moved to a private document: `docs/plans.md` in with-hide/hide-private.
 
+## Boards
+
+`hide board` draws a board for the operator and changes it block by block: `new --title <title> --file <board.json>`, `set <board>`, `edit <board>` (insert, update, replace, remove, move, all or none, at most 20), `show [<board>] [--json]`, `list` and `delete <board>`; `hide board help` (`hided/assets/board/help.md`) holds the blocks, their fields and the limits, and `contracts/hide-cli.json` the grammar and the answer shapes.
+Each answer is one JSON line, as `hide task`'s: `{"ok":true,"result":{"board":{"id","title","revision","state","blocks":[{"id","type"}]}}}` for a change, with `markdown` beside the board for `show <board>`, the record for `show --json`, and `{"boards":[...]}` for `list` and a bare `show`.
+The caller is identified as every pane command's is ([Commands and caller identity](#commands-and-caller-identity)), and a board is keyed by the caller's native session: a plain shell gets `agent_pane_required`, another session's change `board_not_yours`, a board the caller's session or the operator deleted `board_deleted`, and `--revision <n>` a board that moved `board_moved`.
+A refusal that names what to fix (`board_invalid`, `board_too_large`, `board_limit`, `board_moved`, `board_kept`, `quote_refused`) carries it in its next action, such as `blocks[2].rows[3]: 9 cells, the table has 8 columns`.
+A quote's lines are read by the command, from the caller's checkout, before anything is sent: a path that is absolute, holds `..`, leads out of the checkout through a link, or names a credential file, a secrets folder or `.git` (the test the suggestion investigation uses) is `quote_refused`, and the core refuses the same paths again; a missing file or line range is `quote_unreadable`.
+On a connected device the command runs on the device, so the read happens where the file is.
+The limits: 60 blocks and 64 KiB per board, 20 operations per edit, 16 open boards per session, 256 records in all (a deleted stub, then a kept board, then an open board whose session runs in no pane goes first).
+[ARCHITECTURE.md: Session boards](ARCHITECTURE.md#session-boards) owns the record and its store.
+
 ## Verification
 
 Use the worktree-owned entrypoints described in [BUILD.md](BUILD.md#two-entrypoints).
