@@ -327,7 +327,15 @@ impl Runtime {
             .boards
             .book
             .values()
-            .filter_map(|board| Some(((rank(board)?, board.updated_at_unix_ms), board)))
+            // Boards updated in the same millisecond go in the order drawn.
+            .filter_map(|board| {
+                let order = (
+                    rank(board)?,
+                    board.updated_at_unix_ms,
+                    boards::board_number(&board.id),
+                );
+                Some((order, board))
+            })
             .min_by_key(|(order, _)| *order)
             .map(|(_, board)| board.id.clone())
             .ok_or_else(|| {

@@ -459,6 +459,171 @@ fn deleting_a_sessions_records_drops_its_boards_and_their_files() {
     assert_eq!(other["boards"].as_array().unwrap().len(), 1);
 }
 
+/// The book holds `BOOK_LIMIT` records, deleted stubs counted; a new board
+/// past it lets the oldest stub go first, file and all.
+#[test]
+fn a_full_book_lets_its_oldest_deleted_board_go_first() {
+    let root = tempfile::tempdir().unwrap();
+    let (runtime, sender, _, _) = fixture(root.path());
+    let mut runtime = runtime.lock().unwrap();
+    for n in 1..=crate::boards::BOOK_LIMIT {
+        ok(
+            &mut runtime,
+            &sender,
+            json!({"verb": "new", "title": "T", "blocks": []}),
+        );
+        ok(
+            &mut runtime,
+            &sender,
+            json!({"verb": "delete", "board": format!("board-{n}")}),
+        );
+    }
+    saved(root.path(), "board-1", 2);
+    let next = ok(
+        &mut runtime,
+        &sender,
+        json!({"verb": "new", "title": "T", "blocks": []}),
+    );
+    assert_eq!(next["board"]["id"], "board-257");
+    let show = |n: u32| json!({"verb": "show", "board": format!("board-{n}")});
+    assert_eq!(
+        run(&mut runtime, &sender, show(1)).unwrap_err(),
+        "board_unknown"
+    );
+    assert_eq!(
+        run(&mut runtime, &sender, show(2)).unwrap_err(),
+        "board_deleted"
+    );
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
+    wait_for("the oldest stub's file deleted", || !file.exists());
+}
+
+const SENDER_SESSION: &str = "0b5e7c1a-sender";
+const RECIPIENT_SESSION: &str = "7d2f4e9b-recipient";
+
+/// The fixture's two agents as the sidebar shows them, each on its native
+/// session, which is what a board is keyed by.
+fn show_rows(runtime: &mut Runtime) {
+    let row = |pane: &str| {
+        json!({"pane_id": pane, "workspace_id": "w1", "tab_id": "w1:t1", "terminal_id": format!("t-{pane}"),
+               "revision": 1, "focused": false, "agent_status": "idle", "agent": "codex", "name": pane,
+               "cwd": "/checkouts/fixture", "state_change_seq": 1})
+    };
+    let payload: crate::sidebar::SessionSnapshotPayload =
+        serde_json::from_value(json!({"agents": [row("sender"), row("recipient")]})).unwrap();
+    let mut rows = crate::sidebar::project_agents(payload).agents;
+    for row in &mut rows {
+        row.session_id = Some(
+            if row.pane_id == "sender" {
+                SENDER_SESSION
+            } else {
+                RECIPIENT_SESSION
+            }
+            .into(),
+        );
+    }
+    runtime.snapshot.navigator.agents = rows;
+}
+
+/// `pane`'s registration as the delivery ledger keeps it: the native
+/// session, with the actor carrying its digest.
+fn registration(
+    id: &str,
+    pane: &str,
+    session: &str,
+    parent: Option<&str>,
+) -> crate::coordination::AgentRecord {
+    crate::coordination::AgentRecord {
+        id: id.into(),
+        name: Some(format!("{pane}-agent")),
+        machine: crate::node::TEST_NODE.into(),
+        host_scope: "scope".into(),
+        native_machine: "fixture-machine".into(),
+        session: session.into(),
+        instance: format!("terminal-{pane}"),
+        pane: pane.into(),
+        parent: parent.map(Into::into),
+        origin: None,
+        project: None,
+        actor: Actor {
+            pane_id: pane.into(),
+            name: pane.into(),
+            kind: "codex".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: crate::engine::tokens::session_digest(session),
+        },
+        ended: false,
+        terminal_id: None,
+        forked: false,
+    }
+}
+
+/// A mission's Conductor reads the board its worker drew in the worker's
+/// own worktree; an agent that is neither in that checkout nor an ancestor
+/// of the drawing session does not, and reading is all an ancestor does.
+#[test]
+fn a_parent_reads_a_board_its_child_drew_in_another_checkout_and_no_one_else_does() {
+    let root = tempfile::tempdir().unwrap();
+    {
+        let (runtime, sender, _, _) = fixture(root.path());
+        let mut runtime = runtime.lock().unwrap();
+        show_rows(&mut runtime);
+        ok(&mut runtime, &sender, login_flow());
+        let record = ok(
+            &mut runtime,
+            &sender,
+            json!({"verb": "show", "board": "board-1", "json": true}),
+        );
+        assert_eq!(record["board"]["owner"]["session_id"], SENDER_SESSION);
+        saved(root.path(), "board-1", 1);
+    }
+    // The child drew it in a worktree of its own.
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
+    let mut board: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    board["checkout"]["path"] = json!("/checkouts/worker");
+    std::fs::write(&file, serde_json::to_vec(&board).unwrap()).unwrap();
+
+    let (runtime, sender, _, _) = fixture(root.path());
+    let mut runtime = runtime.lock().unwrap();
+    show_rows(&mut runtime);
+    let parent = recipient();
+    let show = json!({"verb": "show", "board": "board-1"});
+    assert_eq!(
+        run(&mut runtime, &parent, show.clone()).unwrap_err(),
+        "board_not_yours"
+    );
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    ledger.agents.push(registration(
+        "agent-1",
+        "recipient",
+        RECIPIENT_SESSION,
+        None,
+    ));
+    ledger.agents.push(registration(
+        "agent-2",
+        &sender.pane_id,
+        SENDER_SESSION,
+        Some("agent-1"),
+    ));
+    runtime.delivery_ledger = Ok(Arc::new(ledger));
+    let shown = ok(&mut runtime, &parent, show);
+    assert!(
+        shown["markdown"]
+            .as_str()
+            .unwrap()
+            .starts_with("# Login flow")
+    );
+    assert_eq!(
+        run(
+            &mut runtime,
+            &parent,
+            json!({"verb": "edit", "board": "board-1", "edits": [{"op": "remove", "id": "b1"}]}),
+        )
+        .unwrap_err(),
+        "board_not_yours"
+    );
+}
+
 #[test]
 fn a_pane_with_no_agent_is_refused() {
     let root = tempfile::tempdir().unwrap();
