@@ -19,6 +19,7 @@ import { plansCatalogs, plansEnglish } from "./resources/plans";
 import { deskCatalogs, deskEnglish } from "./resources/desk";
 import { archiveCatalogs, archiveEnglish } from "./resources/archive";
 import { boardCatalogs, boardEnglish } from "./resources/board";
+import { boardViewCatalogs, boardViewEnglish } from "./resources/boardView";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { agentPresentationCatalogs, agentPresentationEnglish } from "./resources/agentPresentation";
@@ -132,6 +133,7 @@ export const english = {
   ...issuesEnglish,
   ...prWorkEnglish,
   ...boardEnglish,
+  ...boardViewEnglish,
   ...prListEnglish,
   ...workEnglish,
   ...linksEnglish,
@@ -211,6 +213,7 @@ export const catalogs = {
     ...issuesCatalogs.ko,
     ...prWorkCatalogs.ko,
     ...boardCatalogs.ko,
+    ...boardViewCatalogs.ko,
     ...prListCatalogs.ko,
     ...workCatalogs.ko,
     ...linksCatalogs.ko,
@@ -285,6 +288,7 @@ export const catalogs = {
     ...issuesCatalogs["zh-CN"],
     ...prWorkCatalogs["zh-CN"],
     ...boardCatalogs["zh-CN"],
+    ...boardViewCatalogs["zh-CN"],
     ...prListCatalogs["zh-CN"],
     ...workCatalogs["zh-CN"],
     ...linksCatalogs["zh-CN"],
@@ -359,6 +363,7 @@ export const catalogs = {
     ...issuesCatalogs.ja,
     ...prWorkCatalogs.ja,
     ...boardCatalogs.ja,
+    ...boardViewCatalogs.ja,
     ...prListCatalogs.ja,
     ...workCatalogs.ja,
     ...linksCatalogs.ja,
