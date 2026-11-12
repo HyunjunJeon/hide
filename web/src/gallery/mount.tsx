@@ -36,6 +36,7 @@ import { CloseTreeScene } from "./CloseTreeScene";
 import { ViewsCloseScene } from "./ViewsCloseScene";
 import { MissionScene } from "./MissionScene";
 import { PlanScene } from "./PlanScene";
+import { BoardScene, boardSceneParams } from "./BoardScene";
 import { SharedPartsScene } from "./SharedPartsScene";
 import { DeskScene } from "./DeskScene";
 import { DeskThreadScene } from "./DeskThreadScene";
@@ -143,6 +144,11 @@ export function mountGallery(root: Root) {
     if (scene === "plan") {
       document.title = "hide · Plan scene";
       root.render(<StrictMode><PlanScene params={params} /></StrictMode>);
+      return;
+    }
+    if (scene === "board") {
+      document.title = "hide · Board scene";
+      root.render(<StrictMode><BoardScene {...boardSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene === "session-record") {
