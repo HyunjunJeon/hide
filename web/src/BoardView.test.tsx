@@ -77,6 +77,28 @@ describe("BoardView", () => {
     expect(marked()).toEqual([]);
   });
 
+  it("ends the moment on time when a later edit within it changes no block", async () => {
+    await draw(referenceBoard(NOW, 7));
+    await draw(referenceBoard(NOW, 8));
+    act(() => vi.advanceTimersByTime(BOARD_CHANGE_MARK_MS / 2));
+    // A `remove` is an edit that moves the revision and changes no block left.
+    const removed = referenceBoard(NOW, 9);
+    await draw({ ...removed, blocks: removed.blocks.filter((block) => block.id !== "b11") });
+    expect(marked()).toEqual(["b3", "b5"]);
+    act(() => vi.advanceTimersByTime(BOARD_CHANGE_MARK_MS / 2));
+    expect(marked()).toEqual([]);
+  });
+
+  it("ends the moment on time across a wait for the board", async () => {
+    await draw(referenceBoard(NOW, 7));
+    await draw(referenceBoard(NOW, 8));
+    await draw(null, "waiting");
+    await draw(referenceBoard(NOW, 8));
+    expect(marked()).toEqual(["b3", "b5"]);
+    act(() => vi.advanceTimersByTime(BOARD_CHANGE_MARK_MS));
+    expect(marked()).toEqual([]);
+  });
+
   it("marks nothing when the View draws another board", async () => {
     await draw(referenceBoard(NOW, 7));
     await draw({ ...referenceBoard(NOW, 8), id: "board-4" });
@@ -99,9 +121,10 @@ describe("BoardView", () => {
 
   it("draws a readable diagram as its picture and an unreadable one as its source under why", async () => {
     await draw(referenceBoard(NOW));
-    // A narrow lane scrolls the picture rather than shrinking it below its labels' size.
+    // The whole picture shows at a glance: it shrinks with its column and is never wider (operator's decision).
     const picture = container.querySelector<SVGSVGElement>('[data-board-block="b8"] [data-markdown-diagram="mermaid"] svg');
-    expect(picture?.style.minWidth).toBe("calc(40em * 0.8 * var(--interface-scale, 1))");
+    expect(picture?.style.maxWidth).toBe("40em");
+    expect(picture?.style.minWidth).toBe("");
     const unreadable = container.querySelector('[data-board-block="b10"]');
     expect(unreadable?.querySelector("[data-markdown-diagram]")).toBeNull();
     expect(unreadable?.textContent).toContain("Diagram not drawn: Parse error on line 3");

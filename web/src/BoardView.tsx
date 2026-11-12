@@ -4,7 +4,7 @@
 // hands in the board, its state, the opener's mark, the head's controls and
 // Close view, so the gallery draws exactly what the app draws.
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AreaEmpty } from "./AreaEmpty";
 import { changedBlocks, calloutBody, quoteBody, quoteCaption, type BoardBlock, type BoardCalloutTone, type BoardView as Board, type DrawnBoard } from "./boards";
 import { Badge } from "./components/ui/badge";
@@ -32,14 +32,6 @@ const BOX_FILL: Record<BoardCalloutTone, string> = { info: "", decision: "bg-age
 const BADGE: Record<BoardCalloutTone, string> = { info: "", decision: "bg-agent-working/15 text-agent-working", risk: "bg-warning/15 text-warning" };
 
 const NONE: ReadonlySet<string> = new Set();
-
-/**
- * The smallest a diagram is drawn, against its natural width at the default
- * text size: Mermaid's labels at this scale are about the board's text size,
- * and they grow with the interface text size as the text does. A lane narrower than that
- * scrolls the diagram sideways in its own box instead of shrinking it unread.
- */
-const DIAGRAM_MIN_SCALE = 0.8;
 
 export function BoardView({
   board,
@@ -87,10 +79,19 @@ export function BoardView({
   );
 }
 
-/** The blocks changed since the revision last drawn, for `markMs`; a later edit within it adds its own and starts the moment again. */
+/** The blocks marked and when their moment ends. */
+type Mark = { ids: ReadonlySet<string>; until: number };
+
+/**
+ * The blocks changed since the revision last drawn, for `markMs`; a later edit
+ * within it adds its own and starts the moment again. The moment's end is the
+ * mark's own, so nothing but the mark's timer, or another board, takes it
+ * down: an edit that changes no block, a wait for the board, or a new
+ * `markMs` leaves the running moment to end on time.
+ */
 function useChangeMark(board: Board | null, markMs: number): ReadonlySet<string> {
   const drawn = useRef<DrawnBoard | null>(null);
-  const [marked, setMarked] = useState<ReadonlySet<string>>(NONE);
+  const [mark, setMark] = useState<Mark | null>(null);
   const id = board?.id ?? null;
   const revision = board?.revision ?? null;
   useEffect(() => {
@@ -98,16 +99,16 @@ function useChangeMark(board: Board | null, markMs: number): ReadonlySet<string>
     const changed = changedBlocks(board, drawn.current);
     const sameBoard = drawn.current?.id === board.id;
     drawn.current = { id: board.id, revision: board.revision };
-    if (changed.length === 0) {
-      if (!sameBoard) setMarked(NONE);
-      return;
-    }
-    setMarked((before) => new Set([...before, ...changed]));
-    const timer = window.setTimeout(() => setMarked(NONE), markMs);
-    return () => window.clearTimeout(timer);
+    if (!sameBoard) setMark(null);
+    else if (changed.length > 0) setMark((before) => ({ ids: new Set([...(before?.ids ?? []), ...changed]), until: Date.now() + markMs }));
     // The board object is new on every snapshot; only its id and revision are news.
-  }, [id, revision, markMs]);
-  return marked;
+  }, [id, revision]);
+  useEffect(() => {
+    if (!mark) return;
+    const timer = window.setTimeout(() => setMark(null), Math.max(0, mark.until - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [mark]);
+  return mark?.ids ?? NONE;
 }
 
 function BoardHead({ title, updatedAt, controls, opener }: { title: string; updatedAt: number | null; controls: ReactNode; opener: ReactNode }) {
@@ -132,7 +133,10 @@ function Block({ block, changed }: { block: BoardBlock; changed: boolean }) {
   const { t } = useInterfaceTranslation();
   return (
     <div
-      className={cn("-mx-sm rounded-md px-sm py-xs ring-inset transition-colors duration-700 ease-out", changed && "bg-primary/10 ring-1 ring-primary/40")}
+      className={cn(
+        "-mx-sm rounded-md px-sm py-xs ring-inset transition-colors duration-[calc(var(--motion-update-pulse)*1s)] ease-out motion-reduce:transition-none",
+        changed && "bg-foreground/5 ring-1 ring-foreground/30",
+      )}
       data-board-block={block.id}
       data-board-kind={block.kind}
       data-board-changed={changed ? "true" : undefined}
@@ -170,30 +174,7 @@ function BlockBody({ block }: { block: BoardBlock }) {
           <div className={PROSE}>{renderMarkdown(quoteBody(block.markdown, block.quote))}</div>
         </figure>
       );
-    case "diagram":
-      return <DiagramFrame>{renderMarkdown(block.markdown)}</DiagramFrame>;
     default:
       return <div className={PROSE}>{renderMarkdown(block.markdown)}</div>;
   }
-}
-
-/** A diagram block, whose picture keeps at least `DIAGRAM_MIN_SCALE` of its natural width whenever Mermaid puts one in. */
-function DiagramFrame({ children }: { children: ReactNode }) {
-  const frame = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const root = frame.current;
-    if (!root) return;
-    const hold = () => {
-      // Mermaid writes the natural width as the picture's `max-width`.
-      for (const svg of root.querySelectorAll<SVGSVGElement>("[data-markdown-diagram] svg")) {
-        const natural = svg.style.maxWidth;
-        if (natural && natural !== "100%") svg.style.minWidth = `calc(${natural} * ${DIAGRAM_MIN_SCALE} * var(--interface-scale, 1))`;
-      }
-    };
-    hold();
-    const observer = new MutationObserver(hold);
-    observer.observe(root, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
-  return <div ref={frame} className={PROSE}>{children}</div>;
 }
