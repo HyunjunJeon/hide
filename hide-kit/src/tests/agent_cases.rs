@@ -268,7 +268,7 @@ fn earlier_builds_retired_stubs_give_way_to_the_current_ones() {
             .text()
             .contains(hide_agent_hooks::intent_table!())
     );
-    assert!(GUIDE_SKILL.text().contains("<!-- hide-skill@10:"));
+    assert!(GUIDE_SKILL.text().contains("<!-- hide-skill@11:"));
     assert!(!GUIDE_SKILL.text().contains("hide task help"));
     // The mission's stub names missions and the Conductor for the agent
     // choosing it, and sends it to the help that owns the commands.
@@ -617,6 +617,26 @@ fn every_skill_folder_gets_the_stub() {
                 "{path:?}"
             );
         }
+        // Every folder gets version 11 of the guide's stub, which teaches
+        // the board in its table and names it in its description.
+        let written = std::fs::read_to_string(
+            fixture
+                .home()
+                .join(folder)
+                .join(GUIDE_SKILL.name)
+                .join("SKILL.md"),
+        )
+        .unwrap();
+        assert!(written.contains("<!-- hide-skill@11:"), "{folder}");
+        assert!(
+            written.contains("show the operator a file, a diff or a board"),
+            "{folder}"
+        );
+        assert!(
+            written.contains("`hide board new --title <t> --file <board.json>`"),
+            "{folder}"
+        );
+        assert!(written.contains("`hide board open <id>`"), "{folder}");
     }
     assert!(GUIDE_SKILL.text().contains("run `hide guide`"));
 }
