@@ -586,16 +586,18 @@ impl Runtime {
             .filter(|board| !matches!(board.state, BoardState::Deleted { .. }))
             .filter_map(|board| {
                 let session = sessions.iter().find(|session| ***session == board.owner)?;
+                // A kept board is where its file is.
+                let (checkout, kept_path) = match board.kept_file() {
+                    Some((checkout, kept_path)) => (checkout, Some(kept_path.to_owned())),
+                    None => (&board.checkout, None),
+                };
                 Some(crate::model::RecordBoardSnapshot {
                     id: board.id.clone(),
                     title: board.title.clone(),
                     state: board.state.name(),
-                    device_id: board.checkout.device_id.clone(),
-                    checkout_path: board.checkout.path.clone(),
-                    kept_path: match &board.state {
-                        BoardState::Kept { kept_path, .. } => Some(kept_path.clone()),
-                        _ => None,
-                    },
+                    device_id: checkout.device_id.clone(),
+                    checkout_path: checkout.path.clone(),
+                    kept_path,
                     updated_at_unix_ms: board.updated_at_unix_ms,
                     session: (*session).clone(),
                 })

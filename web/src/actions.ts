@@ -3454,9 +3454,14 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
       dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id } });
     },
 
-    /** `파일로 남기기`: the board written into a new file at `path` below its checkout (board design, section 4). */
-    keepBoard(board: string, path: string) {
-      dispatch({ schema_version: 2, kind: "board_keep", payload: { board, path } });
+    /**
+     * `파일로 남기기` on a board's View in `workspace`: the board written into a
+     * new file at `path` below that Workspace's checkout, the one the operator
+     * is looking at, which is not the board's own when an ancestor showed it
+     * there (board design, section 4).
+     */
+    keepBoard(board: string, path: string, workspace: { device_id: string; path: string }) {
+      dispatch({ schema_version: 2, kind: "board_keep", payload: { board, path, workspace } });
     },
 
     /** `지우기`, confirmed: the board and every View of it go. */

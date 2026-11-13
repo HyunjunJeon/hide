@@ -171,7 +171,7 @@ hide board delete <board>
 - `new` opens the board as a board View, as `file open` opens a file, and it waits in the operator's Needs You as To look at until they look. Hide keeps it for your session, through a restart.
 - `edit` changes blocks and `set` replaces them all; what the operator sees changes in place, even after they looked, and asks for no second look: the answer's `unseen` says whether they have looked. `open <board>` brings it forward, or back once closed, and asks them to look again.
 - A delegated child's board does not wait for the operator: it marks your row to read, and the child's report gives its id. Read it with `hide board show <id>`, and when the operator should see it, run `hide board open <id>` from your own pane, so it waits for them as yours.
-- `delete <board>` deletes one of your own boards for good and closes its Views. The operator can delete a board too, or keep it as a Markdown file of the checkout; after that your commands on it answer `board_deleted`, or `board_kept` naming the file, which you edit as a file instead.
+- `delete <board>` deletes one of your own boards for good and closes its Views. The operator can delete a board too, or keep it as a Markdown file of the checkout they look at it in, which for a board your parent showed them is your parent's checkout, not yours; after that your commands on it answer `board_deleted`, or `board_kept` naming the file and, when it is not yours, its checkout, which you edit as a file instead.
 
 ## Project Memory
 

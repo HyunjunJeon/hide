@@ -1512,7 +1512,29 @@ mod tests {
                 },
             }),
         );
+        // A board the operator kept in another checkout than its own.
+        write_json(
+            &folder,
+            "board-2.json",
+            json!({
+                "id": "board-2",
+                "owner": {"device_id": ALIAS, "agent": "claude", "session_id": "s2"},
+                "checkout": {"device_id": ALIAS, "path": "/srv/app-worker"},
+                "title": "Cache layout", "blocks": [], "next_block": 1, "revision": 1,
+                "created_at_unix_ms": 1, "updated_at_unix_ms": 1, "state": "kept",
+                "kept_path": "docs/boards/a.md", "kept_at_unix_ms": 2,
+                "kept_checkout": {"device_id": ALIAS, "path": "/srv/app"},
+            }),
+        );
         name_devices(state, &node()).unwrap();
+        let kept = read(&folder, "board-2.json");
+        assert_eq!(
+            (
+                &kept["kept_checkout"]["device_id"],
+                &kept["kept_checkout"]["path"]
+            ),
+            (&json!(MACHINE), &json!("/srv/app"))
+        );
         let board = read(&folder, "board-1.json");
         assert_eq!(
             (

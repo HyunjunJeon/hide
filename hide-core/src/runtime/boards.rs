@@ -118,6 +118,8 @@ impl BoardKeepView {
 pub(super) struct KeepRequest {
     board: String,
     path: String,
+    /// The checkout the file goes in: the one whose View keep was pressed in.
+    checkout: BoardCheckout,
     workspace_id: String,
     checkout_id: String,
     /// The kept file's path on its machine, as its file View names it.
@@ -373,8 +375,8 @@ impl Runtime {
                 match &current.state {
                     BoardState::Open => {}
                     BoardState::Deleted { .. } => return Err("board_deleted".into()),
-                    BoardState::Kept { kept_path, .. } => {
-                        return Err(refusal("board_kept", &format!("kept as {kept_path}")));
+                    BoardState::Kept { .. } => {
+                        return Err(refusal("board_kept", &boards::kept_where(current)));
                     }
                 }
                 let summary = boards::summary(current);
@@ -979,12 +981,16 @@ impl Runtime {
             })
     }
 
-    /// The operator's `파일로 남기기`: board `id`'s export written into a new
-    /// Markdown file at `path` below its checkout's root, on the machine
-    /// that holds the checkout, by a worker off the lock. One keep runs per
-    /// board; a refusal or a failure is the board's to show on its View's
-    /// head, and the next keep of it starts over.
-    pub(super) fn keep_board(&mut self, id: &str, path: &str) -> bool {
+    /// The operator's `파일로 남기기` on board `id`'s View in the Workspace
+    /// `shown`: the board's export written into a new Markdown file at `path`
+    /// below that Workspace's checkout, the one the operator is looking at,
+    /// on the machine that holds it, by a worker off the lock. That is the
+    /// board's own checkout, or an ancestor's that showed it there (a
+    /// mission's Conductor showing a worker's board in the project, whose
+    /// worktree goes once the node merges). One keep runs per board; a
+    /// refusal or a failure is the board's to show on its View's head, and
+    /// the next keep of it starts over.
+    pub(super) fn keep_board(&mut self, id: &str, path: &str, shown: &WorkspaceKey) -> bool {
         let Some(board) = self.boards.get(id) else {
             crate::diagnostic!(json!({
                 "component": "boards", "kind": "boards.keep_refused",
@@ -1007,6 +1013,18 @@ impl Runtime {
         {
             return false;
         }
+        // Only a checkout that shows the board keeps it.
+        if self
+            .view_layout_of(shown)
+            .and_then(|layout| shown_board(layout, id))
+            .is_none()
+        {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.keep_refused",
+                "board": id, "reason": "not_shown", "device": shown.0,
+            }));
+            return false;
+        }
         if let Some(reason) = boards::keep_path_refused(path) {
             return self.keep_failed(
                 id,
@@ -1022,7 +1040,10 @@ impl Runtime {
             }
         };
         let contents = boards::markdown(board);
-        let checkout = board.checkout.clone();
+        let checkout = BoardCheckout {
+            device_id: shown.0.clone(),
+            path: shown.1.clone(),
+        };
         let source = self
             .board_checkout_ids(&checkout)
             .ok_or_else(|| {
@@ -1055,6 +1076,7 @@ impl Runtime {
         let request = KeepRequest {
             board: id.to_owned(),
             path: path.to_owned(),
+            checkout,
             workspace_id,
             checkout_id,
             absolute: hide_platform::path::wire_join(&root.path, &relative),
@@ -1144,6 +1166,7 @@ impl Runtime {
                     state: BoardState::Kept {
                         kept_path: request.path.clone(),
                         kept_at_unix_ms: super::memory::now_ms(),
+                        kept_checkout: Some(request.checkout.clone()),
                     },
                     // A kept board's View becomes its file's; nothing of it
                     // is put back after a restart.
@@ -1166,17 +1189,15 @@ impl Runtime {
         self.keep_failed(&request.board, &request.path, code, reason)
     }
 
-    /// A kept board's View in its own checkout becomes its file's, in the
-    /// same area at the same place, once the file is read: the operator's own
-    /// open, seen and wearing no agent's mark. Its Views in other checkouts
-    /// close, since the file is not of their checkout.
+    /// A kept board's View in the checkout it was kept in becomes its
+    /// file's, in the same area at the same place, once the file is read:
+    /// the operator's own open, seen and wearing no agent's mark. Its Views
+    /// in other checkouts close, since the file is not of their checkout.
     fn show_kept_file(&mut self, request: &KeepRequest) {
-        let home = self.boards.get(&request.board).map(|board| {
-            (
-                board.checkout.device_id.clone(),
-                board.checkout.path.clone(),
-            )
-        });
+        let home = Some((
+            request.checkout.device_id.clone(),
+            request.checkout.path.clone(),
+        ));
         let shown: Vec<(WorkspaceKey, String, String)> = self
             .every_view_layout()
             .flat_map(|(key, layout)| {
@@ -1239,16 +1260,16 @@ impl Runtime {
     /// Whether board `id` is kept at the file `path` of the checkout `key`,
     /// so its View may become that file's (`try_place_document_at`).
     pub(super) fn board_kept_at(&self, id: &str, key: &WorkspaceKey, path: &str) -> bool {
-        self.boards.get(id).is_some_and(|board| match &board.state {
-            BoardState::Kept { kept_path, .. } => {
-                board.checkout.device_id == key.0
-                    && board.checkout.path == key.1
+        self.boards
+            .get(id)
+            .and_then(Board::kept_file)
+            .is_some_and(|(checkout, kept_path)| {
+                checkout.device_id == key.0
+                    && checkout.path == key.1
                     && hide_platform::path::RelPath::parse(kept_path).is_ok_and(|relative| {
-                        hide_platform::path::wire_join(&board.checkout.path, &relative) == path
+                        hide_platform::path::wire_join(&checkout.path, &relative) == path
                     })
-            }
-            _ => false,
-        })
+            })
     }
 
     /// Deletes board `id` for `by`: its blocks go and a stub stays, so a later

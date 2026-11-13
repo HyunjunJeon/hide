@@ -1148,6 +1148,14 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         Mechanism::Rewritten,
         Moves::Device,
     ),
+    // The checkout a kept board's file is in, when the operator kept it in
+    // another checkout than the board's own; its path stays.
+    (
+        BOARDS,
+        "/kept_checkout/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
     // Where a board's View was (`boards::ViewHint`): each opener's machine,
     // as a stored View's openers are rewritten; the terminal, the session and
     // the area are that machine's own and stay, and its checkout is the

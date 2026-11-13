@@ -529,7 +529,8 @@ A board takes no comment, and the phone shows no board.
 
 The head of an open board carries `파일로 남기기` and `지우기` (`Keep as file`, `Delete`) before its opener's mark; a kept board's head carries neither.
 `파일로 남기기` opens a popover with one path field, filled with `docs/boards/<YYYY-MM-DD>-<slug>.md`: the operator's date, and the title's ASCII words in lower case joined by `-`, or the board's id when the title has none (a Korean title gives `docs/boards/<date>-board-3.md`).
-`남기기` writes the board, as the Markdown its View draws with a `#` title line, into a new file at that path below the board's checkout, making the folders it needs; Git is not touched.
+`남기기` writes the board, as the Markdown its View draws with a `#` title line, into a new file at that path below the checkout of the Workspace the View is in, making the folders it needs; Git is not touched.
+That is the checkout the operator is looking at: a board a parent agent showed in its own checkout (a mission's Conductor showing a worker's board in the project) is kept there, not in the worker's worktree, which goes once its work merges.
 The path is refused unless it ends in `.md`, stays below the checkout with no `.` or `..` name, has no name starting with `.`, and is at most 300 characters; a file there that already holds anything is never written over.
 While it is written the button reads `남기는 중…` and both actions rest; once written, the same place in the same area shows that file's View, the operator's own and seen, and the board is kept: the agent's next change to it is refused with the file to edit instead.
 A keep that fails says why on a line under the head (the path refused, a file already there, the device busy, an unknown result, or another failure), with the path and `다시 시도`, which keeps it at the same path; an empty file left by a failed write is written into, and one that has been written into meanwhile is not.

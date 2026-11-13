@@ -770,6 +770,7 @@ fn book() -> Vec<Board> {
     kept.state = BoardState::Kept {
         kept_path: "docs/boards/2026-11-13-plan.md".into(),
         kept_at_unix_ms: 3_600_000,
+        kept_checkout: None,
     };
     let mut deleted = board(
         "board-4",
@@ -993,6 +994,7 @@ fn a_board_read_returns_its_markdown_redacted_and_clipped_with_the_block_to_cont
     kept.state = BoardState::Kept {
         kept_path: format!("docs/boards/{SECRET}.md"),
         kept_at_unix_ms: 2,
+        kept_checkout: None,
     };
     run.boards = vec![kept, long];
     let mut pen = run.pen();

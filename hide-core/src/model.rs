@@ -680,10 +680,11 @@ pub struct RecordBoardSnapshot {
     pub title: String,
     /// `open` or `kept` (`board_state`).
     pub state: &'static str,
-    /// The machine and checkout the board was drawn in.
+    /// The machine and checkout the board was drawn in, or for a kept
+    /// board the one its file is in.
     pub device_id: String,
     pub checkout_path: String,
-    /// A kept board's file, below its checkout's root.
+    /// A kept board's file, below that checkout's root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kept_path: Option<String>,
     pub updated_at_unix_ms: u64,
@@ -10597,6 +10598,7 @@ mod wire_enum_tests {
                 BoardState::Kept {
                     kept_path: String::new(),
                     kept_at_unix_ms: 0,
+                    kept_checkout: None,
                 },
                 BoardState::Deleted {
                     deleted_by: Remover::Agent,

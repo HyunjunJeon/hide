@@ -172,7 +172,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
   const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.kind === "external") return <ExternalDisplay display={display} workspace={workspace} actions={actions} />;
-  if (display.kind === "board") return <BoardDisplay display={display} actions={actions} />;
+  if (display.kind === "board") return <BoardDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} workspace={workspace} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
@@ -200,7 +200,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
  * frame, so an agent's edit is drawn in place whether or not the operator has
  * looked; the display holds only the board's id (board design, section 3).
  */
-function BoardDisplay({ display, actions }: { display: ViewDisplaySnapshot; actions: Actions }) {
+function BoardDisplay({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const board = useShellStore((s) => boardOf(s.rest?.boards, display.board));
   // hided refuses a path outside the keep rule before the core sees it; that
@@ -210,7 +210,7 @@ function BoardDisplay({ display, actions }: { display: ViewDisplaySnapshot; acti
   const keep = (path: string) => {
     if (!board) return;
     setSent(path);
-    actions.keepBoard(board.id, path);
+    actions.keepBoard(board.id, path, { device_id: workspace.device_id, path: workspace.path });
   };
   const failed = board?.keep?.state === "failed" && board.keep.code ? { code: board.keep.code, path: board.keep.path } : sent !== null && refused === sent && !board?.keep ? { code: "keep_path_refused" as const, path: sent } : null;
   return (

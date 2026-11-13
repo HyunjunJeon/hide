@@ -635,12 +635,23 @@ pub(super) struct ExplorerCreatePayload {
     pub(super) name: String,
 }
 
-/// The operator's `파일로 남기기` on a board's View: the board and the path
-/// below its checkout's root it is kept at (board design, section 4).
+/// The operator's `파일로 남기기` on a board's View: the board, the path it is
+/// kept at below the checkout of the Workspace that View is in, and that
+/// Workspace (board design, section 4).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BoardKeepPayload {
     pub(super) board: String,
+    pub(super) path: String,
+    /// The Workspace whose View the operator pressed keep in: its checkout
+    /// is where the file goes.
+    pub(super) workspace: BoardWorkspace,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BoardWorkspace {
+    pub(super) device_id: String,
     pub(super) path: String,
 }
 
@@ -3836,7 +3847,11 @@ impl Runtime {
                     },
                 })
             }
-            Event::BoardKeep(payload) => self.keep_board(&payload.board, &payload.path),
+            Event::BoardKeep(payload) => self.keep_board(
+                &payload.board,
+                &payload.path,
+                &(payload.workspace.device_id, payload.workspace.path),
+            ),
             Event::BoardDelete(payload) => self.operator_delete_board(&payload.board),
             Event::BoardOpen(payload) => self.operator_open_board(&payload.board),
             Event::DirCreate(payload) => self.request_explorer_change(ExplorerRequest {

@@ -168,8 +168,15 @@ pub enum Remover {
 pub enum BoardState {
     Open,
     Kept {
+        /// The file, below `kept_checkout`.
         kept_path: String,
         kept_at_unix_ms: u64,
+        /// The checkout the operator kept it in: the one whose View they
+        /// pressed keep in, which is not the board's own when an ancestor
+        /// showed it in its checkout. Absent in a record written before it
+        /// was kept anywhere but the board's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kept_checkout: Option<BoardCheckout>,
     },
     Deleted {
         deleted_by: Remover,
@@ -818,9 +825,7 @@ pub(crate) fn check_changeable(board: &Board, revision: Option<u64>) -> Result<(
     match &board.state {
         BoardState::Open => {}
         BoardState::Deleted { .. } => return Err("board_deleted".into()),
-        BoardState::Kept { kept_path, .. } => {
-            return Err(refused("board_kept", format!("its file is {kept_path}")));
-        }
+        BoardState::Kept { .. } => return Err(refused("board_kept", kept_where(board))),
     }
     match revision {
         Some(revision) if revision != board.revision => Err(refused(
@@ -1022,6 +1027,40 @@ fn apply_edit(board: &mut Board, at: &str, edit: Edit, revision: u64) -> Result<
         }
     }
     Ok(())
+}
+
+/// Where a kept board's file is, in the words a `board_kept` refusal gives
+/// the agent: the file, and the checkout it is in when that is not the
+/// board's own.
+pub(crate) fn kept_where(board: &Board) -> String {
+    let BoardState::Kept {
+        kept_path,
+        kept_checkout,
+        ..
+    } = &board.state
+    else {
+        return String::new();
+    };
+    match kept_checkout {
+        Some(checkout) if *checkout != board.checkout => {
+            format!("its file is {kept_path} in the checkout {}", checkout.path)
+        }
+        _ => format!("its file is {kept_path}"),
+    }
+}
+
+impl Board {
+    /// The checkout a kept board's file is in, and the file below it.
+    pub fn kept_file(&self) -> Option<(&BoardCheckout, &str)> {
+        match &self.state {
+            BoardState::Kept {
+                kept_path,
+                kept_checkout,
+                ..
+            } => Some((kept_checkout.as_ref().unwrap_or(&self.checkout), kept_path)),
+            _ => None,
+        }
+    }
 }
 
 /// The stub a deleted board leaves: its id, owner, checkout and title, and

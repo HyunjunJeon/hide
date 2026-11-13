@@ -1733,7 +1733,16 @@ fn keeping(
     root: &std::path::Path,
     folder: &std::path::Path,
 ) -> (Arc<Mutex<Runtime>>, Arc<KeepHost>) {
-    let runtime = on_screen(root, false);
+    keeping_as(root, folder, false)
+}
+
+/// [`keeping`], with `recipient` a delegated child of `sender` when `child`.
+fn keeping_as(
+    root: &std::path::Path,
+    folder: &std::path::Path,
+    child: bool,
+) -> (Arc<Mutex<Runtime>>, Arc<KeepHost>) {
+    let runtime = on_screen(root, child);
     let host = {
         let mut guard = runtime.lock().unwrap();
         let host = KeepHost::on(&mut guard, folder);
@@ -1791,6 +1800,13 @@ fn keep_ended(runtime: &Arc<Mutex<Runtime>>, id: &str) -> Option<String> {
 
 const KEPT_AT: &str = "docs/boards/2026-11-13-login-flow.md";
 
+/// The fixture's checkout as a `board_keep` names the Workspace it was
+/// pressed in.
+fn here() -> Value {
+    let (device_id, path) = key();
+    json!({"device_id": device_id, "path": path})
+}
+
 #[test]
 fn keep_writes_the_export_into_a_new_file_making_its_folders_and_its_view_becomes_the_file() {
     let root = tempfile::tempdir().unwrap();
@@ -1819,7 +1835,7 @@ fn keep_writes_the_export_into_a_new_file_making_its_folders_and_its_view_become
     send(
         &runtime,
         "board_keep",
-        json!({"board": "board-1", "path": KEPT_AT}),
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
     );
     assert_eq!(keep_ended(&runtime, "board-1"), None);
     // The folders were made and the file holds the export, nothing else.
@@ -1900,7 +1916,7 @@ fn keep_refuses_a_path_outside_its_rule_and_a_file_that_already_holds_something(
         send(
             &runtime,
             "board_keep",
-            json!({"board": "board-1", "path": path}),
+            json!({"board": "board-1", "path": path, "workspace": here()}),
         );
         assert_eq!(
             keep_ended(&runtime, "board-1").as_deref(),
@@ -1923,7 +1939,7 @@ fn keep_refuses_a_path_outside_its_rule_and_a_file_that_already_holds_something(
     send(
         &runtime,
         "board_keep",
-        json!({"board": "board-1", "path": "docs/taken.md"}),
+        json!({"board": "board-1", "path": "docs/taken.md", "workspace": here()}),
     );
     assert_eq!(
         keep_ended(&runtime, "board-1").as_deref(),
@@ -1962,7 +1978,7 @@ fn after_a_failed_save_keep_writes_only_into_the_empty_file_left_behind() {
         send(
             &runtime,
             "board_keep",
-            json!({"board": "board-1", "path": KEPT_AT}),
+            json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
         )
     };
 
@@ -2025,7 +2041,7 @@ fn a_save_whose_answer_was_lost_after_it_landed_is_read_back_as_kept() {
     send(
         &runtime,
         "board_keep",
-        json!({"board": "board-1", "path": KEPT_AT}),
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
     );
     assert_eq!(keep_ended(&runtime, "board-1"), None);
     let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
@@ -2260,7 +2276,7 @@ fn a_kept_board_stays_in_its_session_record_as_its_file() {
     send(
         &runtime,
         "board_keep",
-        json!({"board": "board-1", "path": KEPT_AT}),
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
     );
     assert_eq!(keep_ended(&runtime, "board-1"), None);
     let guard = runtime.lock().unwrap();
@@ -2320,7 +2336,7 @@ fn a_board_opened_again_comes_in_front_of_what_its_agents_strip_remembered() {
     send(
         &runtime,
         "board_keep",
-        json!({"board": "board-1", "path": KEPT_AT}),
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
     );
     assert_eq!(keep_ended(&runtime, "board-1"), None);
     wait(&runtime, "the file's View", |runtime| {
@@ -2346,4 +2362,137 @@ fn a_board_opened_again_comes_in_front_of_what_its_agents_strip_remembered() {
     let mut guard = runtime.lock().unwrap();
     let again = board_views(&guard).pop().unwrap().0;
     assert_eq!(drawn_fronts(&mut guard), [Some(again)]);
+}
+
+/// A mission's worker draws its board in its own worktree and the Conductor
+/// shows it to the operator in the project's checkout: kept from there, the
+/// file goes in the checkout the operator is looking at, which outlives the
+/// worker's worktree, and the View there becomes the file's.
+#[test]
+fn a_board_kept_from_an_ancestors_view_is_written_in_that_views_checkout() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    {
+        let runtime = on_screen(root.path(), true);
+        let mut guard = runtime.lock().unwrap();
+        let mut draw = login_flow();
+        draw["no_open"] = json!(true);
+        ok(&mut guard, &recipient(), draw);
+        saved(root.path(), "board-1", 1);
+    }
+    let worktree = "/checkouts/worker";
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
+    let mut stored: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    stored["checkout"]["path"] = json!(worktree);
+    std::fs::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let (runtime, _) = keeping_as(root.path(), folder.path(), true);
+    let view = {
+        let mut guard = runtime.lock().unwrap();
+        keyboard(&mut guard, None);
+        let mut ledger = crate::delivery::ledger::Ledger::default();
+        ledger
+            .agents
+            .push(registration("agent-1", "sender", "native-sender", None));
+        ledger.agents.push(registration(
+            "agent-2",
+            "recipient",
+            "native-recipient",
+            Some("agent-1"),
+        ));
+        guard.delivery_ledger = Ok(Arc::new(ledger));
+        let conductor = Actor {
+            pane_id: "sender".into(),
+            name: "sender".into(),
+            kind: "codex".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: Some("sender-session".into()),
+        };
+        view_of(&ok(
+            &mut guard,
+            &conductor,
+            json!({"verb": "open", "board": "board-1"}),
+        ))
+    };
+
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    // The file is in the project's checkout (the fixture's, kept in
+    // `folder`), not the worker's worktree.
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(KEPT_AT)).unwrap(),
+        export
+    );
+    wait(
+        &runtime,
+        "the Conductor's View to become the file's",
+        |runtime| {
+            runtime
+                .view_layout_of(&key())
+                .and_then(|layout| layout.display(&view))
+                .is_some_and(|display| display.kind == DisplayKind::File)
+        },
+    );
+    {
+        let guard = runtime.lock().unwrap();
+        let display = guard
+            .view_layout_of(&key())
+            .and_then(|layout| layout.display(&view))
+            .unwrap();
+        assert_eq!(display.path, format!("/checkouts/fixture/{KEPT_AT}"));
+        let board = guard.boards.get("board-1").unwrap();
+        assert_eq!(
+            board
+                .kept_file()
+                .map(|(checkout, path)| (checkout.path.as_str(), path)),
+            Some(("/checkouts/fixture", KEPT_AT))
+        );
+    }
+    // The worker learns which file, and in which checkout, to edit instead.
+    let refusal = run(
+        &mut runtime.lock().unwrap(),
+        &recipient(),
+        json!({"verb": "edit", "board": "board-1", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": "Second text"}},
+        ]}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        code(&refusal),
+        (
+            "board_kept",
+            Some(&*format!(
+                "its file is {KEPT_AT} in the checkout /checkouts/fixture"
+            ))
+        )
+    );
+}
+
+/// A keep names the Workspace its View is in; one that does not show the
+/// board writes nothing.
+#[test]
+fn a_keep_from_a_workspace_that_does_not_show_the_board_writes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    {
+        let mut guard = runtime.lock().unwrap();
+        let mut draw = login_flow();
+        draw["no_open"] = json!(true);
+        ok(&mut guard, &recipient(), draw);
+    }
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
+    );
+    let guard = runtime.lock().unwrap();
+    assert_eq!(keep_of(&guard, "board-1"), None);
+    assert_eq!(guard.boards.get("board-1").unwrap().state.name(), "open");
+    assert!(!folder.path().join("docs").exists());
 }
