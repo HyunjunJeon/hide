@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { boardDisplayState, boardOf, calloutBody, changedBlocks, defaultKeepPath, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardKeepFailure, type BoardKeepState, type BoardState, type BoardView } from "./boards";
+import { boardDisplayState, boardOf, calloutBody, changedBlocks, defaultKeepPath, keepNotice, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardKeepFailure, type BoardKeepState, type BoardState, type BoardView } from "./boards";
 import type { ViewDisplaySnapshot } from "./snapshot";
 import { showsSameDocument } from "./viewLayout";
 import { boardBlock, exportBlock } from "./gallery/boardSceneData";
@@ -88,7 +88,7 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
     expect(Object.keys(tones)).toEqual(contract.board_callout_tone);
     expect(Object.keys(states)).toEqual(contract.board_state);
     const keeps: Record<BoardKeepState, true> = { running: true, failed: true };
-    const failures: Record<BoardKeepFailure, true> = { keep_path_refused: true, keep_exists: true, keep_busy: true, keep_unknown: true, keep_failed: true };
+    const failures: Record<BoardKeepFailure, true> = { keep_path_refused: true, keep_exists: true, keep_busy: true, keep_unknown: true, keep_failed: true, keep_open: true };
     expect(Object.keys(keeps)).toEqual(contract.board_keep_state);
     expect(Object.keys(failures)).toEqual(contract.board_keep_failure);
   });
@@ -145,5 +145,19 @@ describe("where 파일로 남기기 offers to keep a board (board design, sectio
   it("is composed (NFC) even where lower case undoes the composition", () => {
     const path = keep("İSTANBUL Ǆ");
     expect(path).toBe(path.normalize("NFC"));
+  });
+});
+
+describe("what the head says about the last keep (board design, section 4)", () => {
+  const exists = { path: "docs/taken.md", state: "failed" as const, code: "keep_exists" as const, reason: "docs/taken.md already holds something else" };
+  it("shows a path the boundary refused after a keep the core refused, with that path", () => {
+    expect(keepNotice(exists, "../x.md", "../x.md")).toEqual({ code: "keep_path_refused", path: "../x.md" });
+  });
+  it("shows the core's refusal after a path the boundary refused, with its own path", () => {
+    expect(keepNotice(exists, "docs/taken.md", "../x.md")).toEqual({ code: "keep_exists", path: "docs/taken.md" });
+  });
+  it("says nothing while a keep runs, or once it went through", () => {
+    expect(keepNotice({ path: "docs/a.md", state: "running" }, "docs/a.md", "../x.md")).toBeNull();
+    expect(keepNotice(undefined, "docs/a.md", null)).toBeNull();
   });
 });

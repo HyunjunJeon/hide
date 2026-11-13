@@ -33,7 +33,7 @@ export type BoardBlock = {
 export type BoardKeepState = "running" | "failed";
 
 /** Why a keep failed (`board_keep_failure`). */
-export type BoardKeepFailure = "keep_path_refused" | "keep_exists" | "keep_busy" | "keep_unknown" | "keep_failed";
+export type BoardKeepFailure = "keep_path_refused" | "keep_exists" | "keep_busy" | "keep_unknown" | "keep_failed" | "keep_open";
 
 /** The operator's keep of a board, while one runs or after one failed. */
 export type BoardKeep = {
@@ -75,6 +75,18 @@ export function boardOf(boards: BoardsRest | undefined, id: string | undefined):
 export function boardDisplayState(state: "open" | "opening" | "waiting" | "unavailable", board: BoardView | null): "open" | "waiting" | "unavailable" {
   if (state === "unavailable") return "unavailable";
   return state === "open" && board ? "open" : "waiting";
+}
+
+/**
+ * What the head says about the operator's last keep: hided's boundary refuses
+ * a path before the core sees it, which leaves the board's own keep line as an
+ * earlier attempt left it, so a refusal of the path sent last speaks first;
+ * otherwise the core's failure, with its path, which Retry keeps again.
+ */
+export function keepNotice(keep: BoardKeep | undefined, sent: string | null, refused: string | null): { code: BoardKeepFailure; path: string } | null {
+  if (sent !== null && refused === sent) return { code: "keep_path_refused", path: sent };
+  if (keep?.state === "failed" && keep.code) return { code: keep.code, path: keep.path };
+  return null;
 }
 
 /** Where kept boards go by default, below the checkout. */

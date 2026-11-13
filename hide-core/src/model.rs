@@ -10628,6 +10628,7 @@ mod wire_enum_tests {
                 KeepFailure::Busy,
                 KeepFailure::Unknown,
                 KeepFailure::Failed,
+                KeepFailure::Open,
             ];
             for variant in failures {
                 match variant {
@@ -10635,7 +10636,8 @@ mod wire_enum_tests {
                     | KeepFailure::Exists
                     | KeepFailure::Busy
                     | KeepFailure::Unknown
-                    | KeepFailure::Failed => {}
+                    | KeepFailure::Failed
+                    | KeepFailure::Open => {}
                 }
             }
             assert_wire(&contract, "board_keep_failure", &failures);

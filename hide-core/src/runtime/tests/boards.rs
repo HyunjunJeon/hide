@@ -2821,12 +2821,25 @@ fn a_refused_board_open_moves_nothing() {
     );
 }
 
-/// The file's View, waiting to replace the kept board's, finds the file
-/// already shown in the Workspace: the empty file a failed keep left, which
-/// the operator opened before keeping again. That View stays, in front, and
-/// the board's closes, so the file has one View.
+/// The kept file's Views in the fixture's checkout.
+fn file_views(runtime: &Runtime, path: &str) -> Vec<String> {
+    runtime
+        .view_layout_of(&key())
+        .map(|layout| {
+            layout
+                .displays()
+                .filter(|display| display.kind == DisplayKind::File && display.path == path)
+                .map(|display| display.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A keep at a file whose View is open (the empty file a failed keep left,
+/// opened before keeping again) is refused before anything is written, and
+/// goes through once that tab is closed.
 #[test]
-fn a_kept_file_already_shown_takes_the_place_of_its_boards_view_once() {
+fn a_keep_at_a_file_open_in_a_tab_is_refused_until_the_tab_closes() {
     let root = tempfile::tempdir().unwrap();
     let folder = tempfile::tempdir().unwrap();
     let (runtime, host) = keeping(root.path(), folder.path());
@@ -2845,38 +2858,87 @@ fn a_kept_file_already_shown_takes_the_place_of_its_boards_view_once() {
         Some("keep_failed")
     );
     let path = format!("/checkouts/fixture/{KEPT_AT}");
-    let shown = |runtime: &Runtime| -> Vec<String> {
-        runtime
-            .view_layout_of(&key())
-            .map(|layout| {
-                layout
-                    .displays()
-                    .filter(|display| display.kind == DisplayKind::File && display.path == path)
-                    .map(|display| display.id.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
     send(
         &runtime,
         "file_open",
         json!({"path": path, "workspace_id": "workspace", "checkout_id": "checkout", "preview": false}),
     );
     wait(&runtime, "the empty file's View", |runtime| {
-        shown(runtime).len() == 1
+        file_views(runtime, &path).len() == 1
     });
-    let opened = shown(&runtime.lock().unwrap());
 
     keep();
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_open")
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(KEPT_AT)).unwrap(),
+        ""
+    );
+    assert_eq!(
+        runtime
+            .lock()
+            .unwrap()
+            .boards
+            .get("board-1")
+            .unwrap()
+            .state
+            .name(),
+        "open"
+    );
+
+    let opened = file_views(&runtime.lock().unwrap(), &path).remove(0);
+    assert!(super::view_areas::act(
+        &mut runtime.lock().unwrap(),
+        json!({"action": "close", "display_id": opened}),
+    ));
+    keep();
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(KEPT_AT)).unwrap(),
+        export
+    );
+}
+
+/// A View of the file opened after the keep's check, while the file is
+/// written: when the board's View would become the file's, that View comes
+/// to the front instead and the board's closes, so the file has one View.
+#[test]
+fn a_kept_file_opened_while_it_was_written_takes_the_place_of_its_boards_view_once() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, host) = keeping(root.path(), folder.path());
+    ok(&mut runtime.lock().unwrap(), &recipient(), login_flow());
+    host.hold_saves(true);
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
+    );
+    // The file is made empty before its save, which waits.
+    wait_for("the empty file", || folder.path().join(KEPT_AT).exists());
+    let path = format!("/checkouts/fixture/{KEPT_AT}");
+    send(
+        &runtime,
+        "file_open",
+        json!({"path": path, "workspace_id": "workspace", "checkout_id": "checkout", "preview": false}),
+    );
+    wait(&runtime, "the file's View", |runtime| {
+        file_views(runtime, &path).len() == 1
+    });
+    let opened = file_views(&runtime.lock().unwrap(), &path);
+    host.hold_saves(false);
     assert_eq!(keep_ended(&runtime, "board-1"), None);
     wait(&runtime, "the board's View to go", |runtime| {
         board_views(runtime).is_empty()
     });
     let guard = runtime.lock().unwrap();
     assert_eq!(
-        shown(&guard),
+        file_views(&guard, &path),
         opened,
-        "the operator's View of the file is its one View"
+        "the operator's View is the file's one View"
     );
     let layout = guard.view_layout_of(&key()).unwrap();
     assert_eq!(

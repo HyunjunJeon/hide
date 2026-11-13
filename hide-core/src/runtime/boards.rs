@@ -95,8 +95,8 @@ pub enum KeepState {
 
 /// Why a keep failed (`board_keep_failure`): the path is not one a board is
 /// kept at, something is already at it, the checkout's host was full, the
-/// save's answer was lost and the file could not be read back, or anything
-/// else the host or the link said.
+/// save's answer was lost and the file could not be read back, anything
+/// else the host or the link said, or a View of the file is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum KeepFailure {
     #[serde(rename = "keep_path_refused")]
@@ -109,6 +109,8 @@ pub enum KeepFailure {
     Unknown,
     #[serde(rename = "keep_failed")]
     Failed,
+    #[serde(rename = "keep_open")]
+    Open,
 }
 
 impl BoardKeepView {
@@ -1075,6 +1077,26 @@ impl Runtime {
             Ok(source) => source,
             Err(reason) => return self.keep_failed(id, path, KeepFailure::Failed, reason),
         };
+        // A View of the file already open would keep showing what it read
+        // (the empty file a failed keep left) over what is written, so the
+        // keep waits until its tab is closed; nothing is read or written.
+        let absolute = hide_platform::path::wire_join(&root.path, &relative);
+        let spelled = hide_platform::path::wire_join(&shown.1, &relative);
+        if self.view_layout_of(shown).is_some_and(|layout| {
+            layout.displays().any(|display| {
+                display.kind == crate::view_layout::DisplayKind::File
+                    && (display.path == absolute || display.path == spelled)
+            })
+        }) {
+            return self.keep_failed(
+                id,
+                path,
+                KeepFailure::Open,
+                format!(
+                    "{path} is open in a tab; close its tab, or keep the board at another path"
+                ),
+            );
+        }
         self.boards.keeps.insert(
             id.to_owned(),
             BoardKeepView {
@@ -1094,7 +1116,7 @@ impl Runtime {
             checkout,
             workspace_id,
             checkout_id,
-            absolute: hide_platform::path::wire_join(&root.path, &relative),
+            absolute,
         };
         // A runtime with no shared mutex writes in place, as a document read
         // does; every shared runtime writes on a worker, the local disk

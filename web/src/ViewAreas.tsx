@@ -8,7 +8,7 @@ import { agentProductName } from "./agentAdapters";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
 import { BoardControls, BoardKeepNotice, BoardView } from "./BoardView";
-import { boardDisplayState, boardOf, defaultKeepPath } from "./boards";
+import { boardDisplayState, boardOf, defaultKeepPath, keepNotice } from "./boards";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
 import { Badge } from "./components/ui/badge";
@@ -212,7 +212,7 @@ function BoardDisplay({ display, workspace, actions }: { display: ViewDisplaySna
     setSent(path);
     actions.keepBoard(board.id, path, { device_id: workspace.device_id, path: workspace.path });
   };
-  const failed = board?.keep?.state === "failed" && board.keep.code ? { code: board.keep.code, path: board.keep.path } : sent !== null && refused === sent && !board?.keep ? { code: "keep_path_refused" as const, path: sent } : null;
+  const failed = keepNotice(board?.keep, sent, refused);
   return (
     <RenderBoundary region="board" fallback={<AreaEmpty state="board-failed" text={t("shell.renderFailed")} />}>
       <BoardView

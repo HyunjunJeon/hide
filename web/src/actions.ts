@@ -3419,9 +3419,16 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
      * the checkout it was kept in.
      */
     openRecordBoard(board: import("./snapshot").RecordBoard) {
+      // Pressed in the Overview, the Workspace behind it comes back on screen,
+      // as it was, to show what the tile opens.
+      const leaveOverview = () => {
+        const state = ui();
+        if (state.overviewOpen || state.screen?.kind === "main" || state.screen?.kind === "desk" || state.screen?.kind === "missions") this.closeOverview();
+      };
       if (board.state === "kept" && board.kept_path) {
         const { project, checkout } = catalogCheckoutAt(board.device_id, board.checkout_path);
         if (!project || !checkout) return diagnostic(`record board: ${board.checkout_path} is no longer open on ${board.device_id}`);
+        leaveOverview();
         const device = deviceField(board.device_id, localDeviceId(rest()));
         const path = `${board.checkout_path.replace(/\/+$/, "")}/${board.kept_path}`;
         if (checkoutInFront(board.device_id, board.checkout_path)) {
@@ -3439,8 +3446,7 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
       // behind it comes back on screen, as it was, to show it.
       const front = frontViewWorkspace();
       if (!front) return diagnostic(`record board: no Workspace in front to open ${board.id} in`);
-      const state = ui();
-      if (state.overviewOpen || state.screen?.kind === "main" || state.screen?.kind === "desk" || state.screen?.kind === "missions") this.closeOverview();
+      leaveOverview();
       ui().setStackFront("view");
       dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id, workspace: { device_id: front.device_id, path: front.path } } });
     },

@@ -473,6 +473,24 @@ describe("a board's tile in a session record (board design, section 3)", () => {
     expect(sent[0]!.payload).toEqual({ board: "board-1", workspace: front });
   });
 
+  it("brings the Workspace back from the Overview to show a kept board's file", () => {
+    const saved = useShellStore.getState();
+    const savedUi = useUiStore.getState();
+    const catalog = { workspaces: [{ id: "w", label: "repo", device_id: "local", path: "/repo", checkouts: [{ id: "c", workspace_id: "w", path: "/repo" }] }] };
+    useShellStore.setState({ rest: { navigator: catalog, workspace_view: { ...front, open: true, documents: false } } as unknown as SnapshotRest });
+    useUiStore.setState({ overviewOpen: true, screen: { kind: "workspace" } } as never);
+    const sent: Parameters<DispatchFn>[0][] = [];
+    try {
+      createActions((event) => { sent.push(event); return true; }).openRecordBoard(board({ state: "kept", kept_path: "docs/boards/a.md" }));
+      expect(useUiStore.getState().overviewOpen).toBe(false);
+      const opened = sent.find((event) => event.kind === "file_open" || event.kind === "reveal_path");
+      expect((opened?.payload as { path?: string } | undefined)?.path).toBe("/repo/docs/boards/a.md");
+    } finally {
+      useShellStore.setState(saved, true);
+      useUiStore.setState(savedUi, true);
+    }
+  });
+
   it("sends nothing for a kept board whose checkout is gone, which has no file to open", () => {
     const { sent } = pressed(false, board({ state: "kept", kept_path: "docs/boards/a.md", checkout_path: "/repo-worker" }));
     expect(sent).toEqual([]);
