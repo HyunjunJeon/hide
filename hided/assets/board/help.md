@@ -1,8 +1,9 @@
 # hide board
-Draw a board for the operator: a title and blocks (an explanation, a callout for a decision or a risk, a table, code you write, code quoted from a file of your checkout, one Mermaid diagram, a divider). Hide keeps it for your session, so it outlives a restart; you change it block by block, and only your session changes it.
+Draw a board for the operator: a title and blocks (an explanation, a callout for a decision or a risk, a table, code you write, code quoted from a file of your checkout, one Mermaid diagram, a divider). Hide keeps it for your session, so it outlives a restart; you change it block by block, and only your session changes it. It opens as a board View in the operator's View area and waits in their Needs You as To look at until they look; what you change afterwards reaches their screen in place, even after they looked.
 
 ```
-hide board new --title <title> (--file <board.json> | --json <blocks>)
+hide board new --title <title> (--file <board.json> | --json <blocks>) [--no-open]
+hide board open <board>
 hide board set <board> (--file <board.json> | --json <blocks>) [--title <title>] [--revision <n>]
 hide board edit <board> (--file <edits.json> | --json <edits>) [--revision <n>]
 hide board show [<board>] [--json]        hide board list        hide board delete <board>        hide board help
@@ -24,6 +25,7 @@ Write the blocks to a file and pass `--file`: a board passed with `--json` can o
 - A quote names a file of your checkout by its path relative to the checkout's root and lines `start` to `end` (from 1, at most 80 lines). `hide board` reads those lines itself, on the machine that holds the file, and the board keeps them as they were when you drew it. A path outside the checkout, with `..`, in `.git`, or naming a credential file (`.env`, keys, secrets) is refused as `quote_refused` before anything is sent.
 - Limits: a title is one line of at most 120 characters; a section's text 4000 characters, a callout's 1000; code 8000 characters, 120 lines of at most 240; a diagram 8000 characters; a board 60 blocks and 64 KiB; your session 16 open boards. A refusal names the field to fix, such as `blocks[2].rows[3]: 9 cells, the table has 8 columns`.
 - `new` answers the board's id (`board-<n>`), its revision and each block's id (`b1`, `b2`, ...). A block keeps its id for good, and a removed block's id is never given again.
+- `new` opens the board's View as `hide file open` opens a file, unless `--no-open`: its answer's `view` has the View's id and `unseen` while the operator has still to look. A View that cannot open now (`view_limit`) says why there, and the board is kept. `open <board>` brings the View forward, or opens it again once it was closed; like any open of yours, it makes a board the operator already saw To look at again. An `edit` or a `set` never does: their answers carry the View's `unseen`, so you know whether the operator has looked.
 - `edit` applies a list of operations, all of them or none, as one revision; the file holds them as a JSON array (or `{"edits": [...]}`):
 
 ```json
@@ -36,6 +38,6 @@ Write the blocks to a file and pass `--file`: a board passed with `--json` can o
 
 - `update` changes some fields of one block and keeps its type (`null` takes an optional field away); `replace` puts a whole new block in its place under the same id; `insert` and `move` put the block after `after`, or at the end without it. A quote whose `path`, `start` or `end` changes is replaced, so its lines are read again. At most 20 operations per edit.
 - `set` replaces the title (with `--title`) and every block at once; a block that carries `"id": "b3"` keeps that id. Give `--revision <n>` to `set` or `edit` to have it refused as `board_moved` when the board changed since the revision you read.
-- `show <board>` prints the board as Markdown (`--json` prints its record); it answers for your own boards, a board drawn in your checkout, and a board a session you started drew. `show` alone prints all of yours; `list` prints each of yours with its state and revision.
+- `show <board>` prints the board as Markdown (`--json` prints its record); it answers for your own boards, a board drawn in your checkout, and a board a session you started drew. `show` alone prints all of yours; `list` prints each of yours with its state, revision and View.
 - `delete <board>` deletes one of your own boards for good: its content goes, and every later command on it answers `board_deleted`, as it does when the operator deleted it. A board whose session records are deleted goes with them.
 - Every answer is one JSON line, `{"ok":true,"result":...}` or `{"ok":false,"reason":...,"next_action":...}`.

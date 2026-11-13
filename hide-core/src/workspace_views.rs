@@ -727,11 +727,17 @@ pub fn save(path: &Path, views: &WorkspaceViews) -> Result<(), String> {
         .map_err(|_| "Workspace view state directory could not be prepared".to_owned())?;
     // An outside file's tab lives as long as the desktop host's grant, which
     // ends with the app: it is never written (PRD outside-path-in-hide D-07).
+    // A board's View is never written either: its board's record keeps
+    // where it was (`boards::ViewHint`), so this file keeps the kinds an
+    // older or upstream build reads (board design, section 1).
     let kept: Vec<WorkspaceView>;
     let workspaces = if views.workspaces.iter().any(|view| {
-        view.layout
-            .displays()
-            .any(|display| display.kind == crate::view_layout::DisplayKind::External)
+        view.layout.displays().any(|display| {
+            matches!(
+                display.kind,
+                crate::view_layout::DisplayKind::External | crate::view_layout::DisplayKind::Board
+            )
+        })
     }) {
         kept = views
             .workspaces
@@ -739,6 +745,7 @@ pub fn save(path: &Path, views: &WorkspaceViews) -> Result<(), String> {
             .cloned()
             .map(|mut view| {
                 view.layout.remove_external(|_| false);
+                view.layout.remove_boards();
                 view
             })
             .collect();

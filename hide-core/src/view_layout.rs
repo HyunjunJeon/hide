@@ -70,6 +70,11 @@ pub enum DisplayKind {
     /// A file outside every checkout the desktop host granted its window;
     /// `path` is empty and `external` names it. Never stored.
     External,
+    /// A board the core keeps (`boards.rs`), drawn from its record on the
+    /// snapshot's `rest.boards`, so an edit reaches it after the operator
+    /// looked; `path` is empty and `board` names it. Never stored: its
+    /// board's record keeps where it was (`boards::ViewHint`).
+    Board,
 }
 
 impl DisplayKind {
@@ -81,15 +86,17 @@ impl DisplayKind {
 
 /// What a View shows, which is all that makes two Views the same one: a
 /// file by its path, a diff by its path and Changes group, a page by its
-/// address and an outside file by its grant, since it carries no path. A
-/// page that names no address yet is the same as no other View, so it is
-/// named by its own id. Every list that counts a View once compares this.
+/// address, an outside file by its grant, since it carries no path, and a
+/// board by its id. A page that names no address yet is the same as no
+/// other View, so it is named by its own id. Every list that counts a View
+/// once compares this.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shown<'a> {
     File(&'a str),
     Diff(&'a str, Option<bool>),
     Page(&'a str),
     External(&'a str),
+    Board(&'a str),
     Unnamed(&'a str),
 }
 
@@ -101,6 +108,7 @@ impl<'a> Shown<'a> {
         committed: Option<bool>,
         url: Option<&'a str>,
         external: Option<&'a ExternalFile>,
+        board: Option<&'a str>,
     ) -> Self {
         match kind {
             DisplayKind::File => Self::File(path),
@@ -109,6 +117,7 @@ impl<'a> Shown<'a> {
             DisplayKind::External => {
                 external.map_or(Self::Unnamed(id), |file| Self::External(&file.grant))
             }
+            DisplayKind::Board => board.map_or(Self::Unnamed(id), Self::Board),
         }
     }
 }
@@ -234,9 +243,14 @@ pub struct Display {
     /// one the operator last asked for. Absent for a file or a diff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// The title its page last reported; absent until it reports one.
+    /// The title its page last reported, absent until it reports one; a
+    /// board display's is its board's title, kept with it when it changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// A board display's board id (`board-<n>`); absent for every other
+    /// kind. A stored file never carries one (`workspace_views::save`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
     /// Raised each time the operator asks a browser display to load `url`,
     /// which is how the host tells a request from the page's own
     /// navigation. Never stored: a restart loads every page once anyway.
@@ -322,6 +336,7 @@ impl Display {
             self.committed,
             self.url.as_deref(),
             self.external.as_ref(),
+            self.board.as_deref(),
         )
     }
 
@@ -385,7 +400,10 @@ impl AreaItem for Display {
             // without its group would never find its tab again.
             let group = match display.kind {
                 DisplayKind::Diff => Some(display.committed.unwrap_or(false)),
-                DisplayKind::File | DisplayKind::Browser | DisplayKind::External => None,
+                DisplayKind::File
+                | DisplayKind::Browser
+                | DisplayKind::External
+                | DisplayKind::Board => None,
             };
             if display.committed != group {
                 display.committed = group;
@@ -409,9 +427,22 @@ impl AreaItem for Display {
                     display.title = title;
                     addresses += 1;
                 }
+            } else if display.kind == DisplayKind::Board {
+                // A board display names its board and its title, and
+                // nothing a page or a document holds.
+                if display.url.is_some() || !display.path.is_empty() || display.preview {
+                    display.url = None;
+                    display.path.clear();
+                    display.preview = false;
+                    addresses += 1;
+                }
             } else if display.url.is_some() || display.title.is_some() {
                 display.url = None;
                 display.title = None;
+                addresses += 1;
+            }
+            if display.kind != DisplayKind::Board && display.board.is_some() {
+                display.board = None;
                 addresses += 1;
             }
             // Only an external display names a grant, and it names nothing
@@ -523,6 +554,18 @@ impl Layout {
             operator: false,
             unseen: None,
             external: None,
+            board: None,
+        }
+    }
+
+    /// A new board display for board `id` titled `title`, with a fresh id,
+    /// not yet in any area. Like a page, it is opened on purpose and never a
+    /// preview.
+    pub fn new_board_display(&mut self, id: &str, title: &str) -> Display {
+        Display {
+            board: Some(id.to_owned()),
+            title: Some(title.to_owned()),
+            ..self.new_display("", DisplayKind::Board, None, false)
         }
     }
 
@@ -543,6 +586,18 @@ impl Layout {
             external: Some(file),
             load,
             ..self.new_display("", DisplayKind::External, None, false)
+        }
+    }
+
+    /// Takes every board display out, as the stored file wants the tree.
+    pub fn remove_boards(&mut self) {
+        let gone: Vec<String> = self
+            .displays()
+            .filter(|display| display.kind == DisplayKind::Board)
+            .map(|display| display.id.clone())
+            .collect();
+        for id in &gone {
+            self.remove(id);
         }
     }
 
@@ -1045,6 +1100,33 @@ mod tests {
             (Some(BLANK_PAGE), "", false)
         );
         assert_eq!(layout.display(&file).unwrap().url, None);
+        assert!(layout.repair().is_empty(), "a repaired tree needs nothing");
+    }
+
+    /// A board display keeps its board and its title through a repair, and
+    /// loses a path it should not hold; any other kind loses a board id.
+    #[test]
+    fn repair_keeps_a_board_displays_board_and_title() {
+        let mut layout = with_files(&["a"]);
+        let mut board = layout.new_board_display("board-1", "Login flow");
+        board.path = "/repo/x".to_owned();
+        let board_id = board.id.clone();
+        layout.insert("a1", board, 1).unwrap();
+        let file = id(&layout, "a");
+        layout.display_mut(&file).unwrap().board = Some("board-2".to_owned());
+
+        layout.repair();
+        let board = layout.display(&board_id).unwrap();
+        assert_eq!(
+            (
+                board.board.as_deref(),
+                board.title.as_deref(),
+                board.path.as_str()
+            ),
+            (Some("board-1"), Some("Login flow"), "")
+        );
+        assert_eq!(board.shown(), Shown::Board("board-1"));
+        assert_eq!(layout.display(&file).unwrap().board, None);
         assert!(layout.repair().is_empty(), "a repaired tree needs nothing");
     }
 

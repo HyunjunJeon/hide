@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// The guide `hide board help` prints.
 pub const HELP: &str = include_str!("../assets/board/help.md");
 
-pub const USAGE: &str = "hide board help\nhide board new --title <title> (--file <board.json> | --json <blocks>)\nhide board set <board> (--file <board.json> | --json <blocks>) [--title <title>] [--revision <n>]\nhide board edit <board> (--file <edits.json> | --json <edits>) [--revision <n>]\nhide board show [<board>] [--json]\nhide board list\nhide board delete <board>";
+pub const USAGE: &str = "hide board help\nhide board new --title <title> (--file <board.json> | --json <blocks>) [--no-open]\nhide board set <board> (--file <board.json> | --json <blocks>) [--title <title>] [--revision <n>]\nhide board edit <board> (--file <edits.json> | --json <edits>) [--revision <n>]\nhide board open <board>\nhide board show [<board>] [--json]\nhide board list\nhide board delete <board>";
 
 /// The largest blocks or edits file read from disk.
 const FILE_LIMIT: u64 = 256 * 1024;
@@ -42,7 +42,10 @@ pub enum BoardCli {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verb {
-    New,
+    /// Draws a board, and opens its View unless `no_open`.
+    New {
+        no_open: bool,
+    },
     Set(String),
     Edit(String),
 }
@@ -161,8 +164,10 @@ pub fn parse<'a>(args: impl Iterator<Item = &'a String>) -> Result<BoardCli, Str
         }
         "new" => {
             let Flags {
-                positional, values, ..
-            } = flags(rest, &["--title", "--file", "--json"], &[])?;
+                positional,
+                values,
+                switches,
+            } = flags(rest, &["--title", "--file", "--json"], &["--no-open"])?;
             if !positional.is_empty() {
                 return Err(USAGE.to_owned());
             }
@@ -171,7 +176,9 @@ pub fn parse<'a>(args: impl Iterator<Item = &'a String>) -> Result<BoardCli, Str
                 .cloned()
                 .ok_or("hide board new needs --title")?;
             return Ok(BoardCli::Draw {
-                verb: Verb::New,
+                verb: Verb::New {
+                    no_open: !switches.is_empty(),
+                },
                 source: source(&values)?,
                 title: Some(title),
                 revision: None,
@@ -218,6 +225,12 @@ pub fn parse<'a>(args: impl Iterator<Item = &'a String>) -> Result<BoardCli, Str
                 return Err(USAGE.to_owned());
             }
             BoardCommand::List {}
+        }
+        "open" => {
+            let Flags { positional, .. } = flags(rest, &[], &[])?;
+            BoardCommand::Open {
+                board: board(&positional)?,
+            }
         }
         "delete" => {
             let Flags { positional, .. } = flags(rest, &[], &[])?;
@@ -436,9 +449,10 @@ fn drawn(
         Source::Json(text) => text,
     };
     Ok(match verb {
-        Verb::New => BoardCommand::New {
+        Verb::New { no_open } => BoardCommand::New {
             title: title.unwrap_or_default(),
             blocks: list(&text, "blocks")?,
+            no_open,
         },
         Verb::Set(board) => BoardCommand::Set {
             board,
@@ -545,12 +559,28 @@ mod tests {
         assert_eq!(
             parse(words(&["new", "--title", "Login", "--file", "b.json"]).iter()).unwrap(),
             BoardCli::Draw {
-                verb: Verb::New,
+                verb: Verb::New { no_open: false },
                 source: Source::File("b.json".into()),
                 title: Some("Login".into()),
                 revision: None,
             }
         );
+        assert_eq!(
+            parse(words(&["new", "--title", "L", "--json", "[]", "--no-open"]).iter()).unwrap(),
+            BoardCli::Draw {
+                verb: Verb::New { no_open: true },
+                source: Source::Json("[]".into()),
+                title: Some("L".into()),
+                revision: None,
+            }
+        );
+        assert_eq!(
+            parse(words(&["open", "board-2"]).iter()).unwrap(),
+            BoardCli::Command(BoardCommand::Open {
+                board: "board-2".into()
+            })
+        );
+        assert!(parse(words(&["open"]).iter()).is_err());
         assert!(parse(words(&["new", "--file", "b.json"]).iter()).is_err());
         assert!(parse(words(&["new", "--title", "T"]).iter()).is_err());
         assert!(
@@ -627,6 +657,7 @@ mod tests {
         BoardCommand::New {
             title: "T".into(),
             blocks: vec![json!({"type": "quote", "path": path, "start": start, "end": end})],
+            no_open: true,
         }
     }
 

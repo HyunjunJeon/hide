@@ -23,7 +23,7 @@ mod attachments;
 mod backlog;
 mod base_push;
 mod blocked_children;
-mod boards;
+pub(crate) mod boards;
 mod branch_card;
 mod branch_decision;
 mod checkout_git;
@@ -2764,6 +2764,9 @@ impl Runtime {
         runtime.refresh_start_profiles();
         runtime.resync_navigator_focus();
         runtime.refresh_agent_scopes();
+        // The saved layouts are read; each open board's View goes back where
+        // it was, before the first frame.
+        runtime.restore_board_views();
         // A sleep saved before this start is as closed as it was.
         runtime.sync_input_gate();
         if shortcuts_imported {

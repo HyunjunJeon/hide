@@ -691,10 +691,12 @@ impl Runtime {
         let mut found: Vec<(WorkspaceKey, &Display)> = Vec::new();
         for (key, layout) in self.every_view_layout() {
             for display in layout.displays() {
-                if !display
-                    .openers
-                    .iter()
-                    .any(|opener| opener.of_session(&scope))
+                // The phone draws no board (board design, section 5).
+                if display.kind == crate::view_layout::DisplayKind::Board
+                    || !display
+                        .openers
+                        .iter()
+                        .any(|opener| opener.of_session(&scope))
                 {
                     continue;
                 }
@@ -761,7 +763,9 @@ pub(super) fn is_output(display: &Display) -> bool {
     use crate::view_layout::DisplayKind;
     let name = match display.kind {
         DisplayKind::Browser => return true,
-        DisplayKind::Diff => return false,
+        // A board is the session record's own tile (board design, node
+        // `keep`), not a file's.
+        DisplayKind::Diff | DisplayKind::Board => return false,
         DisplayKind::File => hide_platform::path::wire_name(&display.path),
         DisplayKind::External => match &display.external {
             Some(file) => file.name.as_str(),

@@ -27,6 +27,9 @@ pub const BLOCK_LIMIT: usize = 60;
 /// Bytes of one board as it is saved, which bounds it on disk and on the
 /// wire.
 pub const BOARD_BYTES: usize = 64 * 1024;
+/// Why a board's View shows nothing: its record is a deleted stub, or went
+/// with its session. `hide view status` prints it as the View's reason.
+pub const DELETED_REASON: &str = "board_deleted";
 /// Operations one `hide board edit` applies, as one revision.
 pub const EDIT_LIMIT: usize = 20;
 /// Open boards one session keeps at once.
@@ -209,6 +212,34 @@ pub struct Board {
     pub updated_at_unix_ms: u64,
     #[serde(flatten)]
     pub state: BoardState,
+    /// Where its View is, kept so a restart puts it back (design section 3,
+    /// Restart): a board display is never stored in `workspace-views.json`.
+    /// Absent while it has no View. It is no part of what was drawn: it
+    /// moves no revision, and a board's size and the wire leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<ViewHint>,
+}
+
+/// Where a board's View was and what the operator had of it: the checkout
+/// and area it was in, who opened it and whether it was still to look at.
+/// Written from the View layouts when they change, read once at a start.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ViewHint {
+    pub device_id: String,
+    pub checkout_path: String,
+    pub area_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<crate::view_feedback::Opener>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub openers: Vec<crate::view_feedback::Opener>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::view_feedback::unseen_or_unreadable"
+    )]
+    pub unseen: Option<crate::view_feedback::Unseen>,
 }
 
 /// The number in a board id, or 0 for a string that is not one.
@@ -230,9 +261,18 @@ pub fn valid_id(id: &str) -> bool {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BoardCommand {
+    /// Draws a board and, unless `no_open`, opens its View as `hide file
+    /// open` opens a file.
     New {
         title: String,
         blocks: Vec<Value>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        no_open: bool,
+    },
+    /// Brings the board's View forward, or makes it again in the caller's
+    /// checkout; like any agent's open, a board already seen is news again.
+    Open {
+        board: String,
     },
     /// Replaces the title (when given) and every block.
     Set {
@@ -275,6 +315,7 @@ impl BoardCommand {
             Self::New { .. } | Self::List {} | Self::Show { board: None, .. } => true,
             Self::Set { board, .. }
             | Self::Edit { board, .. }
+            | Self::Open { board }
             | Self::Delete { board }
             | Self::Show {
                 board: Some(board), ..
@@ -617,7 +658,15 @@ fn check_size(board: &Board) -> Result<(), String> {
             ),
         ));
     }
-    let bytes = encode(board)?.len();
+    // Where its View is is not what the agent drew.
+    let bytes = match &board.view {
+        None => encode(board)?.len(),
+        Some(_) => encode(&Board {
+            view: None,
+            ..board.clone()
+        })?
+        .len(),
+    };
     if bytes > BOARD_BYTES {
         return Err(refused(
             "board_too_large",
@@ -718,6 +767,7 @@ pub(crate) fn apply_new(
         created_at_unix_ms: now,
         updated_at_unix_ms: now,
         state: BoardState::Open,
+        view: None,
     };
     check_size(&board)?;
     Ok(board)
@@ -946,6 +996,8 @@ pub(crate) fn deleted(board: &Board, by: Remover, now: u64) -> Board {
             deleted_by: by,
             deleted_at_unix_ms: now,
         },
+        // A stub is never put back on screen.
+        view: None,
         ..board.clone()
     }
 }
@@ -1179,6 +1231,12 @@ pub fn next_action(code: &str) -> &'static str {
         }
         "board_session_unknown" => {
             "Hide does not know this pane's agent session yet; run the same command again after your next message"
+        }
+        "view_limit" => {
+            "The operator's Workspace holds as many Views as it can; the board is kept, so run hide board open <id> once a View is closed"
+        }
+        "views_unavailable" => {
+            "No Hide window shows this checkout's Views; the board is kept, so run hide board open <id> once one does"
         }
         "agent_pane_required" => "Run hide board from an agent's own Hide pane",
         "caller_context_changed" => {

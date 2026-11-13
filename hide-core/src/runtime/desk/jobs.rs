@@ -1346,7 +1346,7 @@ fn output_kind(display: &crate::view_layout::Display) -> crate::model::DeskOutpu
     use crate::view_layout::DisplayKind;
     let path = match display.kind {
         DisplayKind::Browser => return DeskOutputKind::Page,
-        DisplayKind::Diff => return DeskOutputKind::Doc,
+        DisplayKind::Diff | DisplayKind::Board => return DeskOutputKind::Doc,
         DisplayKind::External => display
             .external
             .as_ref()

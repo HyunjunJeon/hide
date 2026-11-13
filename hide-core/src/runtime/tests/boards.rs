@@ -93,7 +93,7 @@ fn new_set_and_edit_make_a_record_whose_block_ids_stay() {
     );
     assert_eq!(ids(&drawn), ["b1", "b2", "b3", "b4"]);
     assert_eq!(drawn["board"]["blocks"][2]["type"], "quote");
-    assert!(drawn.get("view").is_none(), "no View is opened yet");
+    assert_eq!(drawn["view"]["open"], true, "new opens the board's View");
 
     // An edit changes one block in place; the others keep their ids.
     let (edited, changed) = run(
@@ -816,4 +816,502 @@ fn a_saved_board_leaves_the_link_record_at_16_and_the_view_layouts_at_5() {
         !std::fs::read_to_string(&views).unwrap().contains("board"),
         "no board reaches the View layouts"
     );
+}
+
+// ---- The board View (design section 3) ----
+
+use super::unseen_views::{fixture_in, key, keyboard, row, unseen};
+use crate::agent_state::RowMark;
+use crate::view_layout::DisplayKind;
+
+/// The fixture of `unseen_views` (two working agents in the front checkout,
+/// the Files lane open on its documents, the window holding the keyboard),
+/// with the operator in `sender`'s pane: an open of `recipient`'s lands
+/// behind them.
+fn on_screen(root: &std::path::Path, child: bool) -> Arc<Mutex<Runtime>> {
+    let runtime = fixture_in(root, child);
+    keyboard(&mut runtime.lock().unwrap(), Some("sender"));
+    runtime
+}
+
+/// The board displays of the fixture's checkout, by View id and board.
+fn board_views(runtime: &Runtime) -> Vec<(String, String)> {
+    runtime
+        .view_layout_of(&key())
+        .map(|layout| {
+            layout
+                .displays()
+                .filter(|display| display.kind == DisplayKind::Board)
+                .map(|display| (display.id.clone(), display.board.clone().unwrap()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The View id a board command answered with.
+fn view_of(answer: &Value) -> String {
+    answer["view"]["id"].as_str().unwrap().to_owned()
+}
+
+fn edit_first_text(runtime: &mut Runtime, actor: &Actor, text: &str) -> Value {
+    ok(
+        runtime,
+        actor,
+        json!({"verb": "edit", "board": "board-1", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": text}},
+        ]}),
+    )
+}
+
+#[test]
+fn an_agents_board_opened_behind_the_operator_waits_in_needs_you_named_by_its_title() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+
+    let drawn = ok(&mut guard, &recipient(), login_flow());
+    assert_eq!(
+        (&drawn["view"]["open"], &drawn["view"]["unseen"]),
+        (&json!(true), &json!(true))
+    );
+    let view = view_of(&drawn);
+    assert_eq!(board_views(&guard), [(view.clone(), "board-1".to_owned())]);
+    assert!(unseen(&guard, &view));
+    let agent = row(&guard, "recipient");
+    assert_eq!(
+        (agent.group.as_str(), agent.mark),
+        ("needs_you", RowMark::Look)
+    );
+    let look = agent.look.as_ref().unwrap();
+    assert_eq!(
+        (look.view_id.as_str(), look.label.as_str()),
+        (view.as_str(), "Login flow")
+    );
+    // `hide view list` names it by kind and board id.
+    let listed = guard
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            "recipient",
+            crate::workspace_control::Query::ViewList,
+        )
+        .unwrap();
+    let listed = serde_json::to_value(listed).unwrap();
+    let board = listed["views"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["view_id"] == view.as_str())
+        .unwrap();
+    assert_eq!(
+        (&board["kind"], &board["target"], &board["unseen"]),
+        (&json!("board"), &json!("board-1"), &json!(true))
+    );
+
+    // A new title is the row's at once.
+    ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "set", "board": "board-1", "title": "Login flow, again", "blocks": [
+            {"type": "divider"},
+        ]}),
+    );
+    assert_eq!(
+        row(&guard, "recipient").look.as_ref().unwrap().label,
+        "Login flow, again"
+    );
+
+    // `--no-open` draws the board alone.
+    let quiet = ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "new", "title": "Notes", "no_open": true, "blocks": [{"type": "divider"}]}),
+    );
+    assert!(quiet.get("view").is_none());
+    assert_eq!(board_views(&guard).len(), 1);
+}
+
+#[test]
+fn a_delegated_childs_board_turns_only_its_ancestors_unread() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), true);
+    let mut guard = runtime.lock().unwrap();
+    keyboard(&mut guard, None);
+    assert!(!row(&guard, "sender").unread);
+
+    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+    assert!(unseen(&guard, &view));
+    let child = row(&guard, "recipient");
+    assert!(child.delegated);
+    assert_eq!(
+        child.group, "working",
+        "a delegated child is no Needs You row"
+    );
+    assert!(child.look.is_none());
+    let parent = row(&guard, "sender");
+    assert!(parent.unread);
+    assert_ne!(parent.group, "needs_you");
+}
+
+#[test]
+fn an_edit_leaves_a_board_the_operator_saw_seen_and_an_open_makes_it_news_again() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+    // The operator looks: the board is in front of the agent's own strip.
+    keyboard(&mut guard, Some("recipient"));
+    assert!(!unseen(&guard, &view));
+    keyboard(&mut guard, Some("sender"));
+
+    let edited = edit_first_text(&mut guard, &recipient(), "Second text");
+    assert_eq!(
+        (&edited["board"]["revision"], &edited["view"]["unseen"]),
+        (&json!(2), &json!(false))
+    );
+    assert!(!unseen(&guard, &view), "an edit is not news");
+    assert!(row(&guard, "recipient").look.is_none());
+
+    let opened = ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "open", "board": "board-1"}),
+    );
+    assert_eq!(view_of(&opened), view, "an open finds the board's one View");
+    assert_eq!(opened["view"]["unseen"], true);
+    assert_eq!(board_views(&guard).len(), 1);
+    assert!(unseen(&guard, &view), "an open is news again");
+    assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
+
+    // An open keeps no receipt: any number of them leaves room for the
+    // next action.
+    for _ in 0..130 {
+        ok(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "open", "board": "board-1"}),
+        );
+    }
+}
+
+/// `hide browser open <url>` from `actor`'s pane, as the daemon commits it.
+fn open_page(runtime: &mut Runtime, actor: &Actor, url: &str) -> String {
+    runtime
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            &actor.pane_id,
+            &authority(actor).context,
+            &format!("{}-page-{url}", super::unix_milliseconds()),
+            crate::workspace_control::Action::OpenBrowser {
+                url: url.to_owned(),
+                area_id: None,
+                new_target: false,
+            },
+            Ok(None),
+        )
+        .unwrap()
+        .view_id
+}
+
+#[test]
+fn the_view_cap_closes_a_board_view_and_the_board_opens_again() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    // The operator works in the agent's pane, so each page comes to the
+    // front and the board, looked at longest ago, is behind them.
+    keyboard(&mut guard, Some("recipient"));
+    ok(&mut guard, &recipient(), login_flow());
+    for page in 0..crate::view_layout::MAX_VIEW_DISPLAYS {
+        open_page(
+            &mut guard,
+            &recipient(),
+            &format!("https://example.test/{page}"),
+        );
+    }
+    assert!(
+        board_views(&guard).is_empty(),
+        "the cap closed the board's View"
+    );
+    let listed = ok(&mut guard, &recipient(), json!({"verb": "list"}));
+    assert_eq!(
+        (&listed["boards"][0]["state"], &listed["boards"][0]["view"]),
+        (&json!("open"), &json!({"open": false}))
+    );
+    let opened = run(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "open", "board": "board-1"}),
+    )
+    .unwrap()
+    .0;
+    assert_eq!(opened["view"]["open"], true);
+    assert_eq!(board_views(&guard).len(), 1);
+}
+
+#[test]
+fn a_comment_on_a_board_view_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+    for anchor in [
+        json!({"kind": "lines", "start": 1, "end": 1, "lines": ["The first text."]}),
+        json!({"kind": "area", "rect": {"x": 1.0, "y": 1.0, "width": 10.0, "height": 10.0}}),
+    ] {
+        let payload = serde_json::from_value(json!({
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": key().1},
+            "action": "add", "display_id": view, "anchor": anchor, "note": "Why?",
+        }))
+        .unwrap();
+        guard.apply_view_comment(payload);
+        assert_eq!(
+            guard
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("view_comment.invalid_anchor")
+        );
+    }
+    assert!(
+        guard
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get(&key().0, &key().1)
+            .is_none_or(|view| view.feedback.comments.is_empty())
+    );
+}
+
+#[test]
+fn a_restart_puts_each_board_view_back_in_its_area_with_its_unseen_record() {
+    let root = tempfile::tempdir().unwrap();
+    let (seen, waiting, area) = {
+        let runtime = on_screen(root.path(), false);
+        let mut guard = runtime.lock().unwrap();
+        let seen = view_of(&ok(&mut guard, &recipient(), login_flow()));
+        let waiting = view_of(&ok(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "new", "title": "Rollout", "blocks": [{"type": "divider"}]}),
+        ));
+        // The operator looks at the first, in front of its area; the
+        // second stays behind it, still to look at.
+        keyboard(&mut guard, Some("recipient"));
+        keyboard(&mut guard, Some("sender"));
+        assert!(!unseen(&guard, &seen) && unseen(&guard, &waiting));
+        let area = guard
+            .view_layout_of(&key())
+            .and_then(|layout| layout.area_of(&waiting))
+            .unwrap()
+            .id
+            .clone();
+        guard.snapshot_delta_payload(0);
+        (seen, waiting, area)
+    };
+    let hinted = |id: &str, unseen: bool| {
+        let file = hide_kit::layout::board_file(&boards_dir(root.path()), id);
+        wait_for(&format!("{id}'s View hint saved"), || {
+            std::fs::read(&file)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|board| {
+                    board["view"]["area_id"] == area.as_str()
+                        && board["view"].get("unseen").is_some() == unseen
+                })
+        });
+    };
+    hinted("board-1", false);
+    hinted("board-2", true);
+    // No board reaches the View layouts' own file.
+    let views = std::fs::read_to_string(root.path().join("views.json")).unwrap();
+    assert!(!views.contains("board"), "{views}");
+
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    guard.snapshot_delta_payload(0);
+    let layout = guard.view_layout_of(&key()).unwrap();
+    let back: Vec<(String, Option<String>, bool)> = layout
+        .displays()
+        .filter(|display| display.kind == DisplayKind::Board)
+        .map(|display| {
+            (
+                layout.area_of(&display.id).unwrap().id.clone(),
+                display.board.clone(),
+                display.unseen.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        back,
+        [
+            (area.clone(), Some("board-1".to_owned()), false),
+            (area.clone(), Some("board-2".to_owned()), true),
+        ]
+    );
+    let agent = row(&guard, "recipient");
+    assert_eq!(
+        (agent.group.as_str(), agent.mark),
+        ("needs_you", RowMark::Look)
+    );
+    assert_eq!(agent.look.as_ref().unwrap().label, "Rollout");
+    // The View ids are minted again; the board ids are what lasts.
+    let _ = (seen, waiting);
+}
+
+/// The `boards` rest field the last frame carried, and its revision.
+struct RestBoards {
+    value: Arc<crate::runtime::boards::BoardsSnapshot>,
+    revision: u64,
+}
+
+impl std::ops::Deref for RestBoards {
+    type Target = crate::runtime::boards::BoardsSnapshot;
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+fn rest_boards(runtime: &mut Runtime) -> RestBoards {
+    let payload = runtime.snapshot_delta_payload(0);
+    let boards = &payload.current_rest.boards;
+    RestBoards {
+        value: Arc::clone(&boards.value),
+        revision: boards.revision,
+    }
+}
+
+#[test]
+fn the_front_workspaces_boards_ride_the_wire_and_move_only_with_an_accepted_change() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    // A board with no View is not on the wire.
+    ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "new", "title": "Notes", "no_open": true, "blocks": [{"type": "divider"}]}),
+    );
+    assert!(rest_boards(&mut guard).items.is_empty());
+
+    ok(&mut guard, &recipient(), login_flow());
+    let first = rest_boards(&mut guard);
+    let board = &first.items[0];
+    assert_eq!(
+        (board.id.as_str(), board.revision, board.state),
+        ("board-2", 1, "open")
+    );
+    let kinds: Vec<&str> = board.blocks.iter().map(|block| block.kind).collect();
+    assert_eq!(kinds, ["section", "table", "quote", "diagram"]);
+    assert_eq!(
+        board.blocks[0].markdown,
+        "## What changes\n\nThe first text."
+    );
+    assert_eq!(
+        board.blocks[2]
+            .quote
+            .as_ref()
+            .map(|quote| (quote.path.as_str(), quote.start, quote.end)),
+        Some(("src/login.rs", 3, 4))
+    );
+
+    // A frame with nothing new copies no board.
+    let again = rest_boards(&mut guard);
+    assert!(Arc::ptr_eq(&first.value, &again.value));
+    assert_eq!(first.revision, again.revision);
+
+    // A refused or unchanged command moves nothing.
+    assert!(
+        run(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "edit", "board": "board-2", "edits": [{"op": "remove", "id": "b99"}]}),
+        )
+        .is_err()
+    );
+    let (_, changed) = run(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "edit", "board": "board-2", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": "The first text."}},
+        ]}),
+    )
+    .unwrap();
+    assert!(!changed);
+    assert!(Arc::ptr_eq(&first.value, &rest_boards(&mut guard).value));
+
+    // An accepted edit is on the next frame, block by block.
+    let (_, changed) = run(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "edit", "board": "board-2", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": "Second text"}},
+        ]}),
+    )
+    .unwrap();
+    assert!(changed);
+    let edited = rest_boards(&mut guard);
+    assert!(edited.revision > first.revision);
+    let board = &edited.items[0];
+    assert_eq!(
+        (
+            board.revision,
+            board.blocks[0].changed_at,
+            board.blocks[1].changed_at
+        ),
+        (2, 2, 1)
+    );
+    assert_eq!(board.blocks[0].markdown, "## What changes\n\nSecond text");
+}
+
+#[test]
+fn a_board_the_agent_deleted_leaves_its_view_unavailable() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+    ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "delete", "board": "board-1"}),
+    );
+    // The front strip is the agent's, which shows the View it opened.
+    keyboard(&mut guard, Some("recipient"));
+    guard.snapshot_delta_payload(0);
+    let layout = &guard.snapshot.workspace_view.as_ref().unwrap().layout;
+    let display = super::view_areas::areas(layout)
+        .into_iter()
+        .flat_map(|(_, _, displays)| displays)
+        .find(|display| display.id == view)
+        .unwrap();
+    assert_eq!(
+        (display.state, display.reason.as_deref(), display.kind),
+        (
+            crate::model::ViewDisplayState::Unavailable,
+            Some(crate::boards::DELETED_REASON),
+            DisplayKind::Board
+        )
+    );
+    assert_eq!(display.board.as_deref(), Some("board-1"));
+    assert_eq!(
+        code(
+            &run(
+                &mut guard,
+                &recipient(),
+                json!({"verb": "open", "board": "board-1"})
+            )
+            .unwrap_err()
+        )
+        .0,
+        "board_deleted"
+    );
+}
+
+#[test]
+fn a_mission_keeps_nothing_of_a_board_view() {
+    let mut layout = crate::view_layout::Layout::default();
+    let display = layout.new_board_display("board-1", "Login flow");
+    assert!(crate::missions::KeptView::of(&display, "Login flow".into()).is_none());
 }

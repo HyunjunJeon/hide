@@ -1632,6 +1632,21 @@
             ],
             "type": "object"
         },
+        "board_opened": {
+            "properties": {
+                "board": {
+                    "type": "object"
+                },
+                "view": {
+                    "type": "object"
+                }
+            },
+            "required": [
+                "board",
+                "view"
+            ],
+            "type": "object"
+        },
         "board_shown": {
             "properties": {
                 "board": {
@@ -6743,6 +6758,12 @@
                     "value": {
                         "type": "json"
                     }
+                },
+                {
+                    "name": "--no-open",
+                    "required": false,
+                    "requires": [],
+                    "value": null
                 }
             ],
             "refusals": [
@@ -6917,6 +6938,31 @@
         },
         {
             "answers": [
+                "board_opened"
+            ],
+            "arguments": [
+                {
+                    "name": "board",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "board open",
+            "options": [],
+            "refusals": [
+                "board_unknown",
+                "board_not_yours",
+                "board_deleted",
+                "board_kept",
+                "view_limit",
+                "views_unavailable"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
                 "board_list"
             ],
             "arguments": [],
@@ -6948,7 +6994,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:faad2b1f4ad99faaf297922f8e98b7a0935e172cd1db50e79055377039a31e98",
+    "digest": "sha256:445d8cbade2b9b0507f1d72d5dcc5f90a6e3874b55b27929bb3f098323cb9dfe",
     "envelopes": {
         "agent": {
             "answer": "value",

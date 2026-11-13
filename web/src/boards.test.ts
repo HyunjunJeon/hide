@@ -1,5 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { calloutBody, changedBlocks, quoteBody, quoteCaption, type BoardView } from "./boards";
+import { boardDisplayState, boardOf, calloutBody, changedBlocks, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardState, type BoardView } from "./boards";
+import type { ViewDisplaySnapshot } from "./snapshot";
+import { showsSameDocument } from "./viewLayout";
 import { boardBlock, exportBlock } from "./gallery/boardSceneData";
 
 function board(revision: number, changed: Record<string, number>, id = "board-1"): BoardView {
@@ -55,5 +59,40 @@ describe("a quote under its caption", () => {
   it("keeps a first line that names other lines", () => {
     expect(quoteBody(markdown, { ...quote, end: 48 })).toBe(markdown);
     expect(quoteBody(markdown, undefined)).toBe(markdown);
+  });
+});
+
+describe("a board display fed from rest.boards (board design, section 3, The wire)", () => {
+  it("finds its board by id, and none before the store has it", () => {
+    const shown = { items: [board(2, { b1: 2 }), board(1, {}, "board-2")] };
+    expect(boardOf(shown, "board-2")?.id).toBe("board-2");
+    expect(boardOf(shown, "board-3")).toBeNull();
+    expect(boardOf(undefined, "board-1")).toBeNull();
+    expect(boardOf(shown, undefined)).toBeNull();
+  });
+
+  it("is open only once both the core and the store have the board", () => {
+    const shown = board(1, {});
+    expect(boardDisplayState("open", shown)).toBe("open");
+    expect(boardDisplayState("open", null)).toBe("waiting");
+    expect(boardDisplayState("waiting", shown)).toBe("waiting");
+    expect(boardDisplayState("unavailable", shown)).toBe("unavailable");
+  });
+
+  it("decodes every block kind, tone and state the core sends", () => {
+    const contract = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../contracts/snapshot-wire-enums.json"), "utf8"));
+    const kinds: Record<BoardBlockKind, true> = { section: true, callout: true, table: true, code: true, quote: true, diagram: true, divider: true };
+    const tones: Record<BoardCalloutTone, true> = { info: true, decision: true, risk: true };
+    const states: Record<BoardState, true> = { open: true, kept: true, deleted: true };
+    expect(Object.keys(kinds)).toEqual(contract.board_block_kind);
+    expect(Object.keys(tones)).toEqual(contract.board_callout_tone);
+    expect(Object.keys(states)).toEqual(contract.board_state);
+  });
+
+  it("counts two Views the same content only when they show one board", () => {
+    const display = (id: string, board?: string): ViewDisplaySnapshot => ({ id, tab_id: null, path: "", label: "Login flow", kind: board ? "board" : "browser", committed: null, preview: false, state: "open", reason: null, board });
+    expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-1"))).toBe(true);
+    expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-2"))).toBe(false);
+    expect(showsSameDocument(display("d1", "board-1"), display("d2"))).toBe(false);
   });
 });

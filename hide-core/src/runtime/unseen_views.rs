@@ -326,14 +326,22 @@ impl Runtime {
             .into_iter()
             .map(|display| {
                 // A name is the file's or the page's, so a control character
-                // in it never starts a line of its own in the letter.
-                let target: String = display
-                    .url
-                    .as_deref()
-                    .unwrap_or(&display.path)
-                    .chars()
-                    .map(|c| if c.is_control() { ' ' } else { c })
-                    .collect();
+                // in it never starts a line of its own in the letter. A board
+                // is named by its id and title, which `hide board show`
+                // reads in any checkout of an ancestor (board design,
+                // section 3).
+                let target: String = match display.board.as_deref() {
+                    Some(board) => {
+                        format!(
+                            "board {board} · {}",
+                            super::view_areas::board_label(display)
+                        )
+                    }
+                    None => display.url.as_deref().unwrap_or(&display.path).to_owned(),
+                }
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
                 let seen = if display.unseen.is_some() {
                     "not seen by the operator"
                 } else {

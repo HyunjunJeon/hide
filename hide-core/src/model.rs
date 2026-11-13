@@ -88,6 +88,12 @@ pub struct Snapshot {
     pub turn_answer: crate::runtime::turn_answer::TurnAnswerReadSnapshot,
     /// Each pane's session's own plan (PRD hide-plan D-10).
     pub plans: crate::runtime::plans::PlansSnapshot,
+    /// The boards a display of the front Workspace shows, drawn from their
+    /// records (board design, section 3): replaced whole when its stamp
+    /// moves, which `refresh_boards` moves only when what it holds changed.
+    pub boards: crate::runtime::boards::BoardsSnapshot,
+    #[serde(skip)]
+    pub boards_generation: Option<u64>,
     pub navigator: NavigatorSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
@@ -520,6 +526,10 @@ pub struct ViewDisplaySnapshot {
     /// grant draws the file; every other window draws only its name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external: Option<crate::view_layout::ExternalFile>,
+    /// A board display's board id; the board itself rides `rest.boards`.
+    /// Absent for every other kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
 }
 
 impl ViewDisplaySnapshot {
@@ -532,6 +542,7 @@ impl ViewDisplaySnapshot {
             self.committed,
             self.url.as_deref(),
             self.external.as_ref(),
+            self.board.as_deref(),
         )
     }
 }
@@ -8153,6 +8164,8 @@ impl Snapshot {
             missions: Default::default(),
             mission_events: Default::default(),
             mission_brief: Default::default(),
+            boards: Default::default(),
+            boards_generation: None,
             turn_answer: Default::default(),
             plans: Default::default(),
             navigator: NavigatorSnapshot {
@@ -10498,6 +10511,86 @@ mod wire_enum_tests {
                 .collect();
             assert_wire(&contract, "mission_node_work", &states);
             checked.insert("mission_node_work");
+        }
+
+        {
+            // A board on `rest.boards`: each block's kind, a callout's tone
+            // and the board's state.
+            use crate::boards::{BoardState, Body, Remover, Tone};
+            let bodies = [
+                Body::Section {
+                    title: String::new(),
+                    text: String::new(),
+                },
+                Body::Callout {
+                    tone: Tone::Info,
+                    title: None,
+                    text: String::new(),
+                },
+                Body::Table {
+                    title: None,
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                },
+                Body::Code {
+                    title: None,
+                    language: None,
+                    code: String::new(),
+                },
+                Body::Quote {
+                    path: String::new(),
+                    start: 1,
+                    end: 1,
+                    lines: Vec::new(),
+                    note: None,
+                },
+                Body::Diagram {
+                    title: None,
+                    mermaid: String::new(),
+                },
+                Body::Divider {},
+            ];
+            for body in &bodies {
+                match body {
+                    Body::Section { .. }
+                    | Body::Callout { .. }
+                    | Body::Table { .. }
+                    | Body::Code { .. }
+                    | Body::Quote { .. }
+                    | Body::Diagram { .. }
+                    | Body::Divider {} => {}
+                }
+            }
+            let kinds: Vec<&str> = bodies.iter().map(Body::kind).collect();
+            assert_wire(&contract, "board_block_kind", &kinds);
+            checked.insert("board_block_kind");
+            let tones = [Tone::Info, Tone::Decision, Tone::Risk];
+            for variant in tones {
+                match variant {
+                    Tone::Info | Tone::Decision | Tone::Risk => {}
+                }
+            }
+            assert_wire(&contract, "board_callout_tone", &tones);
+            checked.insert("board_callout_tone");
+            let states = [
+                BoardState::Open,
+                BoardState::Kept {
+                    kept_path: String::new(),
+                    kept_at_unix_ms: 0,
+                },
+                BoardState::Deleted {
+                    deleted_by: Remover::Agent,
+                    deleted_at_unix_ms: 0,
+                },
+            ];
+            for state in &states {
+                match state {
+                    BoardState::Open | BoardState::Kept { .. } | BoardState::Deleted { .. } => {}
+                }
+            }
+            let names: Vec<&str> = states.iter().map(BoardState::name).collect();
+            assert_wire(&contract, "board_state", &names);
+            checked.insert("board_state");
         }
 
         {

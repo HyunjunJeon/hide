@@ -11,7 +11,7 @@ use serde_json::json;
 
 const CHECKOUT: &str = "/checkouts/fixture";
 
-fn key() -> (String, String) {
+pub(super) fn key() -> (String, String) {
     (crate::node::TEST_NODE.into(), CHECKOUT.into())
 }
 
@@ -35,9 +35,16 @@ fn agent(pane: &str, session: &str) -> crate::model::SidebarAgentSnapshot {
 /// a working Codex agent in its own terminal, in the one front checkout,
 /// with the Files lane open, a window holding the keyboard and the operator
 /// in neither pane. With `child`, `recipient` is `sender`'s delegated child.
-fn fixture(child: bool) -> (tempfile::TempDir, Arc<Mutex<Runtime>>) {
+pub(super) fn fixture(child: bool) -> (tempfile::TempDir, Arc<Mutex<Runtime>>) {
     let root = tempfile::tempdir().unwrap();
-    let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+    let runtime = fixture_in(root.path(), child);
+    (root, runtime)
+}
+
+/// The same fixture on the state folder under `root`, so a test can make
+/// the runtime again on what the first one saved.
+pub(super) fn fixture_in(root: &std::path::Path, child: bool) -> Arc<Mutex<Runtime>> {
+    let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root);
     {
         let mut guard = runtime.lock().unwrap();
         for pane in guard.snapshot.navigator.workspaces[0].checkouts[0].tabs[0]
@@ -63,12 +70,12 @@ fn fixture(child: bool) -> (tempfile::TempDir, Arc<Mutex<Runtime>>) {
         guard.refresh_agent_lineage();
         guard.refresh_pane_read_state();
     }
-    (root, runtime)
+    runtime
 }
 
 /// The operator's keyboard on `pane`, or on no pane, as the strip settles
 /// it before the next frame.
-fn keyboard(runtime: &mut Runtime, pane: Option<&str>) {
+pub(super) fn keyboard(runtime: &mut Runtime, pane: Option<&str>) {
     runtime.snapshot.terminal.pane_id = pane.map(str::to_owned);
     runtime.set_operator_focus(pane.map(str::to_owned));
     runtime.refresh_pane_read_state();
@@ -108,7 +115,7 @@ fn open(runtime: &mut Runtime, caller: &str, path: &str) -> String {
     view
 }
 
-fn row<'a>(runtime: &'a Runtime, pane: &str) -> &'a crate::model::SidebarAgentSnapshot {
+pub(super) fn row<'a>(runtime: &'a Runtime, pane: &str) -> &'a crate::model::SidebarAgentSnapshot {
     runtime
         .snapshot
         .navigator
@@ -118,7 +125,7 @@ fn row<'a>(runtime: &'a Runtime, pane: &str) -> &'a crate::model::SidebarAgentSn
         .unwrap()
 }
 
-fn unseen(runtime: &Runtime, view: &str) -> bool {
+pub(super) fn unseen(runtime: &Runtime, view: &str) -> bool {
     runtime
         .view_layout_of(&key())
         .and_then(|layout| layout.display(view))
@@ -127,7 +134,7 @@ fn unseen(runtime: &Runtime, view: &str) -> bool {
 
 /// `hide view status <view>` or a `hide browser` read from `caller`'s pane,
 /// as the CLI reports it after the read (`Action::Read`).
-fn read(runtime: &mut Runtime, caller: &str, view: &str) {
+pub(super) fn read(runtime: &mut Runtime, caller: &str, view: &str) {
     let expected = runtime
         .workspace_control_query(
             crate::node::TEST_NODE,
@@ -165,7 +172,7 @@ fn blocked(runtime: &mut Runtime, blocked: bool) {
 }
 
 /// The View comes forward as the operator's press on it does.
-fn look_at(runtime: &mut Runtime, view: &str) {
+pub(super) fn look_at(runtime: &mut Runtime, view: &str) {
     runtime
         .change_view_layout(&key(), |layout, stamp| {
             layout.focus(view, stamp).map(|changed| ((), changed))

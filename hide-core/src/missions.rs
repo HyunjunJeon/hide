@@ -866,14 +866,15 @@ pub struct KeptView {
 
 impl KeptView {
     /// What `display`, titled `label`, can be opened again from; none for
-    /// an outside file, which no address names, or an address past
-    /// [`SHOW_LIMIT`].
+    /// an outside file, which no address names, for a board, which only its
+    /// agent opens again (`hide board open`) and whose kind a mission's file
+    /// never holds, or an address past [`SHOW_LIMIT`].
     pub fn of(display: &crate::view_layout::Display, label: String) -> Option<Self> {
         use crate::view_layout::DisplayKind;
         let address = match display.kind {
             DisplayKind::File | DisplayKind::Diff => display.path.clone(),
             DisplayKind::Browser => display.url.clone()?,
-            DisplayKind::External => return None,
+            DisplayKind::External | DisplayKind::Board => return None,
         };
         if address.is_empty() || address.len() > SHOW_LIMIT {
             return None;
@@ -899,7 +900,7 @@ impl KeptView {
             DisplayKind::File | DisplayKind::Diff => {
                 display.shows(&self.address, self.kind, Some(self.committed))
             }
-            DisplayKind::External => false,
+            DisplayKind::External | DisplayKind::Board => false,
         }
     }
 }

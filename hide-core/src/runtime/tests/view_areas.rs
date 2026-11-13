@@ -58,7 +58,9 @@ fn tree(runtime: &mut Runtime) -> ViewLayoutSnapshot {
 }
 
 /// Every area in tree order with its displays.
-fn areas(layout: &ViewLayoutSnapshot) -> Vec<(String, Option<String>, Vec<ViewDisplaySnapshot>)> {
+pub(super) fn areas(
+    layout: &ViewLayoutSnapshot,
+) -> Vec<(String, Option<String>, Vec<ViewDisplaySnapshot>)> {
     let mut found = Vec::new();
     let mut nodes = vec![&layout.root];
     while let Some(node) = nodes.pop() {

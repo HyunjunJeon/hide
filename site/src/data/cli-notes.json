@@ -239,8 +239,12 @@
     "example": "hide board help"
   },
   "board new": {
-    "line": "Draws a board for the operator from a file of blocks: explanations, decisions, tables, code, quoted lines of a file and a diagram.",
+    "line": "Draws a board for the operator from a file of blocks: explanations, decisions, tables, code, quoted lines of a file and a diagram; it opens as a board View that waits in Needs You until they look, unless --no-open.",
     "example": "hide board new --title \"Login flow\" --file board.json"
+  },
+  "board open": {
+    "line": "Brings one of your boards' View forward, or opens it again once it was closed; a board the operator already saw is To look at again.",
+    "example": "hide board open board-1"
   },
   "board set": {
     "line": "Replaces every block of one of your boards, and its title with --title, keeping the board's id.",
@@ -255,7 +259,7 @@
     "example": "hide board show board-1"
   },
   "board list": {
-    "line": "Lists your session's boards, each with its state and revision.",
+    "line": "Lists your session's boards, each with its state, revision and View.",
     "example": "hide board list"
   },
   "board delete": {

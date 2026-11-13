@@ -391,6 +391,7 @@ mod tests {
             created_at_unix_ms: n,
             updated_at_unix_ms: n,
             state: BoardState::Open,
+            view: None,
         }
     }
 
