@@ -831,6 +831,124 @@ fn git_in(repo: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+/// The investigation lists a board by the Project the catalog already knows
+/// its checkout to be in (`catalog_project`, which Memory's hooks also
+/// take): a worktree's board belongs to its repository's Project, on this
+/// machine and on a device alike, and a folder the catalog has not read, or
+/// a device whose facts are unconfirmed, lists nothing.
+#[test]
+fn a_board_belongs_to_the_project_the_catalog_knows_its_checkout_in() {
+    use crate::boards::{Board, BoardCheckout, BoardState};
+    const DEVICE: &str = "device-boards";
+    let folder = tempfile::tempdir().unwrap();
+    let repo = folder.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git_in(&repo, &["init", "-q", "-b", "main"]);
+    git_in(&repo, &["commit", "-q", "--allow-empty", "-m", "start"]);
+    let worktree = folder.path().join("repo-wt");
+    git_in(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let worktree = worktree.to_string_lossy().into_owned();
+    let mut runtime = runtime();
+    runtime.catalog_paths = runtime.ask_paths(std::collections::BTreeSet::from([
+        repo.to_string_lossy().into_owned(),
+        worktree.clone(),
+    ]));
+    let node = runtime.node.as_str().to_owned();
+    // The oracle: the Project `hide_project` names for the repository.
+    let local = hide_project::resolve(&repo, &node).unwrap().id;
+    assert_ne!(
+        local,
+        hide_project::project_id(&node, std::path::Path::new(&worktree)),
+        "a worktree's own folder is not its Project's root"
+    );
+    runtime.device_facts.insert(
+        DEVICE.into(),
+        crate::device_catalog::DeviceFacts {
+            facts: [(
+                "/home/u/repo-wt".to_owned(),
+                crate::device_catalog::Fact::Known(hide_project::ProjectFacts {
+                    root: "/home/u/repo".into(),
+                    checkout_root: "/home/u/repo-wt".into(),
+                    kind: hide_project::ProjectKind::Git,
+                    branch: Some("wt".into()),
+                    linked_worktree: true,
+                }),
+            )]
+            .into(),
+            ..Default::default()
+        },
+    );
+    let device = hide_project::project_id(DEVICE, std::path::Path::new("/home/u/repo"));
+    let checkout = |device_id: &str, path: &str| BoardCheckout {
+        device_id: device_id.into(),
+        path: path.into(),
+    };
+
+    assert_eq!(
+        runtime.board_project(&checkout(&node, &worktree)),
+        Some(local.clone())
+    );
+    assert_eq!(
+        runtime.board_project(&checkout(DEVICE, "/home/u/repo-wt")),
+        Some(device.clone())
+    );
+    let unread = format!("{}/elsewhere", folder.path().display());
+    assert_eq!(runtime.board_project(&checkout(&node, &unread)), None);
+    assert_eq!(
+        runtime.board_project(&checkout(DEVICE, "/home/u/other")),
+        None
+    );
+
+    let board = |id: &str, at: BoardCheckout| Board {
+        id: id.into(),
+        owner: crate::links::ledger::SessionIdentity {
+            device_id: at.device_id.clone(),
+            agent: "claude".into(),
+            session_id: "s".into(),
+        },
+        checkout: at,
+        title: id.into(),
+        blocks: Vec::new(),
+        next_block: 1,
+        revision: 1,
+        created_at_unix_ms: 1,
+        updated_at_unix_ms: 1,
+        state: BoardState::Open,
+    };
+    let book = [
+        board("board-1", checkout(&node, &worktree)),
+        board("board-2", checkout(DEVICE, "/home/u/repo-wt")),
+        board("board-3", checkout(&node, &unread)),
+    ];
+    let listed = |project: &str| {
+        crate::suggestions::investigation::project_boards(project, book.iter(), |at| {
+            runtime.board_project(at)
+        })
+        .into_iter()
+        .map(|board| board.id)
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(listed(&local), ["board-1"]);
+    assert_eq!(listed(&device), ["board-2"]);
+
+    runtime.device_facts.get_mut(DEVICE).unwrap().reread = true;
+    assert_eq!(
+        runtime.board_project(&checkout(DEVICE, "/home/u/repo-wt")),
+        None,
+        "facts a new connection has not confirmed name no Project"
+    );
+}
+
 /// A Project whose agent left one commit on `hide-suggestion-s2-x`, read as
 /// a ready line 2 by a runtime with a worker; with `remote`, its main follows
 /// `origin/main` in a bare repository beside it.

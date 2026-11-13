@@ -82,6 +82,7 @@ An unresolved disagreement needs an operator answer.
 ## The suggestion investigation
 
 Moved to a private document: `docs/suggestion-investigation.md` in with-hide/hide-private.
+Each turn's input lists the boards the Project's sessions drew (`hide_core::boards`; at most 20, newest first, none deleted, inside the records' bytes), and a `board` read answers one from the copies the run took with its parts, never from a node, through the same redaction and one-result bound as every other read (`hide-core/src/suggestions/investigation/reads.rs`).
 
 ## Providers
 
@@ -439,7 +440,7 @@ The connection protocol moved to 94 with `BackendSpec::profile`, so a device hel
 
 ### What leaves the machine
 
-Hide AI sends redacted conversation summaries, Project Memory batches, a pull request's title, body start, file names and check names (for a card's summary), and a suggestion investigation's record index, notebook and the redacted session excerpts, CI log ends and repository files its reads open to the agent the operator chose in Settings (Runs on) and to the agents the operator added under fallback, and to no other.
+Hide AI sends redacted conversation summaries, Project Memory batches, a pull request's title, body start, file names and check names (for a card's summary), and a suggestion investigation's record index, notebook, the redacted titles of the Project's boards, and the redacted session excerpts, CI log ends, repository files and boards its reads open to the agent the operator chose in Settings (Runs on) and to the agents the operator added under fallback, and to no other.
 A registered agent that is neither chosen nor in the fallback list is never asked a request: its program may be installed and logged in, and it is only inspected, for the Settings screen, which starts no model turn.
 Because the list is the operator's, adding an agent to it is the consent for that agent, and Project Memory's disclosure names it (its version moves when this description changes, so earlier opt-ins are asked again).
 

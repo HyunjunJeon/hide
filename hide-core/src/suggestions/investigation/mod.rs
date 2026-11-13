@@ -33,6 +33,7 @@ use super::analysis::{
 };
 use super::notebook::{EditRefused, NotebookEdit, Outcome};
 use super::policy;
+use crate::boards::{Board, BoardCheckout, BoardState};
 use reads::{Read, ReadTools};
 
 /// Admits one turn against the daily Hide AI call cap; `Err` names the cap.
@@ -42,24 +43,59 @@ pub type Admission = Box<dyn FnMut() -> Result<(), String> + Send>;
 pub struct Investigation {
     router: Arc<AiRouter>,
     reads: Box<dyn ReadTools>,
+    /// The Project's boards as they were when the run began
+    /// ([`project_boards`]): listed in each turn and read from here.
+    boards: Vec<Board>,
     admit: Admission,
     cancel: CancelToken,
     clock: Box<dyn Fn() -> Instant + Send>,
 }
 
+/// The boards a run of `project_id` is handed: those whose checkout
+/// `project_of` names as this Project's, deleted ones left out, the newest
+/// first and at most [`policy::BOARDS_LISTED`]. A checkout whose Project is
+/// not known is left out too, so a board reaches a provider only for the
+/// Project it was drawn in. `project_of` is asked only of the boards still
+/// in question.
+pub(crate) fn project_boards<'a>(
+    project_id: &str,
+    boards: impl Iterator<Item = &'a Board>,
+    project_of: impl Fn(&BoardCheckout) -> Option<String>,
+) -> Vec<Board> {
+    let mut shown: Vec<&Board> = boards
+        .filter(|board| !matches!(board.state, BoardState::Deleted { .. }))
+        .filter(|board| project_of(&board.checkout).as_deref() == Some(project_id))
+        .collect();
+    shown.sort_by(|a, b| {
+        b.updated_at_unix_ms
+            .cmp(&a.updated_at_unix_ms)
+            .then_with(|| {
+                crate::boards::board_number(&b.id).cmp(&crate::boards::board_number(&a.id))
+            })
+    });
+    shown
+        .into_iter()
+        .take(policy::BOARDS_LISTED)
+        .cloned()
+        .collect()
+}
+
 impl Investigation {
-    /// `reads` runs on the Project's node; `admit` counts each turn as a
-    /// call against the daily cap; `cancel` ends a turn in flight when the
-    /// core stops.
+    /// `reads` runs on the Project's node; `boards` are the Project's,
+    /// taken with the run's parts; `admit` counts each turn as a call
+    /// against the daily cap; `cancel` ends a turn in flight when the core
+    /// stops.
     pub fn new(
         router: Arc<AiRouter>,
         reads: Box<dyn ReadTools>,
+        boards: Vec<Board>,
         admit: Admission,
         cancel: CancelToken,
     ) -> Self {
         Self {
             router,
             reads,
+            boards,
             admit,
             cancel,
             clock: Box::new(Instant::now),
@@ -100,6 +136,7 @@ struct Host<'a> {
     input: &'a AnalysisInput,
     pen: &'a mut dyn NotebookPen,
     reads: &'a mut dyn ReadTools,
+    boards: &'a [Board],
     admit: &'a mut Admission,
     started_unix_ms: u64,
     carried: prompt::Carried,
@@ -208,7 +245,8 @@ impl Host<'_> {
             if self.stopping() {
                 return Step::Stop;
             }
-            let (value, outcome) = reads::fulfil(&read, &self.input.records, self.reads, budget);
+            let (value, outcome) =
+                reads::fulfil(&read, &self.input.records, self.boards, self.reads, budget);
             budget =
                 budget.saturating_sub(serde_json::to_string(&value).map_or(budget, |s| s.len()));
             match outcome {
@@ -231,6 +269,7 @@ impl TurnHost for Host<'_> {
             turn,
             &self.carried,
             &self.input.records,
+            self.boards,
             self.pen.notebook(),
             self.started_unix_ms,
         );
@@ -289,6 +328,7 @@ impl Analysis for Investigation {
             input,
             pen,
             reads: &mut *self.reads,
+            boards: &self.boards,
             admit: &mut self.admit,
             started_unix_ms,
             carried: prompt::Carried::default(),
@@ -334,6 +374,7 @@ impl Analysis for Investigation {
             "edits": host.tally.edits,
             "edits_refused": host.tally.edits_refused,
             "fresh_records": input.records.fresh().count(),
+            "boards": self.boards.len(),
             "duration_ms": clock().saturating_duration_since(started).as_millis() as u64,
         }));
         end
