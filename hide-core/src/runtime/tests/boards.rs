@@ -668,6 +668,16 @@ fn a_full_book_lets_go_a_stub_then_a_kept_board_then_the_oldest_board_of_no_pane
     let (runtime, sender, _, _) = fixture(root.path());
     let mut runtime = runtime.lock().unwrap();
     show_rows(&mut runtime);
+    // Board 2's View is open: the operator may be looking at it, so the
+    // next oldest board of no pane goes in its place.
+    runtime
+        .change_view_layout(&key(), |layout, stamp| {
+            let display = layout.new_board_display("board-2", "Board 2");
+            let area = layout.active_area().id.clone();
+            layout.insert(&area, display, stamp)?;
+            Ok(((), true))
+        })
+        .unwrap();
     let shown = |runtime: &mut Runtime, n: u32| {
         run(
             runtime,
@@ -677,7 +687,7 @@ fn a_full_book_lets_go_a_stub_then_a_kept_board_then_the_oldest_board_of_no_pane
         .err()
     };
     let draw = json!({"verb": "new", "title": "T", "blocks": []});
-    for (drawn, gone) in [(257, 4), (258, 3), (259, 2)] {
+    for (drawn, gone) in [(257, 4), (258, 3), (259, 5)] {
         assert_eq!(
             ok(&mut runtime, &sender, draw.clone())["board"]["id"],
             format!("board-{drawn}")
@@ -693,9 +703,10 @@ fn a_full_book_lets_go_a_stub_then_a_kept_board_then_the_oldest_board_of_no_pane
         None,
         "the session on screen keeps its board"
     );
-    assert_eq!(shown(&mut runtime, 5), None);
-    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-2");
-    wait_for("board-2's file deleted", || !file.exists());
+    assert_eq!(shown(&mut runtime, 2), None, "a board on screen stays");
+    assert_eq!(shown(&mut runtime, 6), None);
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-5");
+    wait_for("board-5's file deleted", || !file.exists());
 }
 
 /// A book whose every board belongs to a session on screen refuses a new
@@ -991,6 +1002,27 @@ fn an_edit_leaves_a_board_the_operator_saw_seen_and_an_open_makes_it_news_again(
     assert_eq!(board_views(&guard).len(), 1);
     assert!(unseen(&guard, &view), "an open is news again");
     assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
+
+    // Only the session that drew it shows it; another reads it with `show`.
+    let stranger = Actor {
+        pane_id: "sender".into(),
+        name: "sender".into(),
+        kind: "codex".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        session: Some("sender-session".into()),
+    };
+    assert_eq!(
+        code(
+            &run(
+                &mut guard,
+                &stranger,
+                json!({"verb": "open", "board": "board-1"})
+            )
+            .unwrap_err()
+        )
+        .0,
+        "board_not_yours"
+    );
 
     // An open keeps no receipt: any number of them leaves room for the
     // next action.
@@ -1366,4 +1398,36 @@ fn a_mission_keeps_nothing_of_a_board_view() {
     let mut layout = crate::view_layout::Layout::default();
     let display = layout.new_board_display("board-1", "Login flow");
     assert!(crate::missions::KeptView::of(&display, "Login flow".into()).is_none());
+}
+
+#[test]
+fn the_operators_close_takes_a_board_view_and_leaves_its_board_for_open() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+    assert!(super::view_areas::act(
+        &mut guard,
+        json!({"action": "close", "display_id": view}),
+    ));
+    assert!(board_views(&guard).is_empty());
+    assert!(
+        row(&guard, "recipient").look.is_none(),
+        "a closed View is nothing to look at"
+    );
+    let listed = ok(&mut guard, &recipient(), json!({"verb": "list"}));
+    assert_eq!(
+        (&listed["boards"][0]["state"], &listed["boards"][0]["view"]),
+        (&json!("open"), &json!({"open": false}))
+    );
+    let opened = ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "open", "board": "board-1"}),
+    );
+    assert_eq!(
+        (&opened["view"]["open"], &opened["view"]["unseen"]),
+        (&json!(true), &json!(true))
+    );
+    assert_eq!(board_views(&guard).len(), 1);
 }

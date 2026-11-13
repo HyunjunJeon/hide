@@ -27,7 +27,7 @@ fn open(runtime: &mut Runtime, checkout_id: &str, path: &Path, preview: bool, be
 
 /// Sends a `view_layout` action as the web does, named for the Workspace of
 /// the frame it was taken on.
-fn act(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
+pub(super) fn act(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
     runtime.sync_workspace_view();
     let view = runtime
         .snapshot

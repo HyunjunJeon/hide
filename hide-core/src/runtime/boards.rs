@@ -283,11 +283,10 @@ impl Runtime {
                 }
                 (answer, true)
             }
+            // Only the drawing session shows its board, as only it changes
+            // it; an ancestor reads it with `show`.
             BoardCommand::Open { board } => {
-                let current = self.boards.get(&board).ok_or("board_unknown")?;
-                if !self.may_read(&own, &context, current) {
-                    return Err("board_not_yours".into());
-                }
+                let current = self.own_board(&own, &board)?;
                 match &current.state {
                     BoardState::Open => {}
                     BoardState::Deleted { .. } => return Err("board_deleted".into()),
@@ -692,8 +691,9 @@ impl Runtime {
     /// Room for a new board of `own`: refused when the session keeps
     /// `OPEN_PER_SESSION` open boards; with the book full, the board to let
     /// go (a deleted stub first, then a kept board, then an open one whose
-    /// session runs in no pane, each the one updated longest ago), or a
-    /// refusal when every board belongs to an agent on screen.
+    /// session runs in no pane and whose View is closed, each the one
+    /// updated longest ago), or a refusal when every board belongs to an
+    /// agent on screen or is on the operator's screen.
     fn make_board_room(
         &self,
         own: &SessionIdentity,
@@ -721,7 +721,11 @@ impl Runtime {
         let rank = |board: &Board| match board.state {
             BoardState::Deleted { .. } => Some(0),
             BoardState::Kept { .. } => Some(1),
-            BoardState::Open if !live.contains(&board.owner) => Some(2),
+            BoardState::Open
+                if !live.contains(&board.owner) && self.board_display(&board.id).is_none() =>
+            {
+                Some(2)
+            }
             BoardState::Open => None,
         };
         let oldest = self

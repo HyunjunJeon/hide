@@ -121,6 +121,9 @@ test("an agent draws, edits, reads and deletes its board, and another agent's ed
 
 const front = (page: Page) => page.locator('[data-view-tab-bar] [role="tab"][aria-selected="true"]');
 
+// The flow the earlier Markdown-file board failed: the agent opens, the person looks, the agent edits, and the
+// screen shows the edit. The core tests prove the edit moves `rest.boards` and leaves the View seen; only the
+// page proves the View the person is looking at draws the new block in place, with no reload or reopen.
 test("a board the operator looked at shows the agent's later edit in place", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const engine = await startFixture({ agents: false });

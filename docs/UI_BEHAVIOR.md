@@ -3140,7 +3140,7 @@ The line opens Conversation when that tab exists, and is plain text otherwise; i
 Primary-screen panes and computers that do not report the screen mode show no line, regardless of the agent kind.
 Pulling the phone's output never sends input to the program or moves the desktop's view.
 볼 것 is the third tab, `대화 | 터미널 | 볼 것` (`터미널 | 볼 것` for an agent with no conversation), and it is there only while the agent has a View open now; the number of Views not seen is on it.
-A board's View is not listed there and does not count toward the tab: the phone draws no board yet, so an agent's board waits in the desktop's Needs You only.
+A board's View is not listed there and does not count toward the tab: the phone draws no board yet, so an agent's board waits in the desktop's Needs You; the phone's row of that agent still wears the `look` mark the desktop's row has, and its press opens the conversation while the board is the only View to look at.
 The list's eye row, the 볼 것 mark, opens the detail on this tab; a row that asks a question or needs an approval, and every other row, opens on the conversation as before, and 대화 goes straight to the agent's conversation.
 The tab lists the Views the agent opened, `안 본 것 N` above `본 것 N`, newest first: a tile with the kind's icon and a dot when the View is not seen, its name, its kind (변경 내용, 문서, 이미지, 웹 화면, 파일) and how long ago it was opened.
 A View the desktop closes leaves the list, and one the agent opens again is not seen again and returns to 안 본 것.
