@@ -438,3 +438,43 @@ describe("input after a confirmed View close", () => {
     } finally { remove(); }
   });
 });
+
+describe("a board's tile in a session record (board design, section 3)", () => {
+  const front = { device_id: "local", path: "/repo" };
+  const board = (patch: Partial<import("./snapshot").RecordBoard> = {}): import("./snapshot").RecordBoard => ({
+    id: "board-1", title: "Login flow", state: "open", device_id: "local", checkout_path: "/repo", updated_at_unix_ms: 0,
+    session: { device_id: "local", agent: "claude", session_id: "s" }, ...patch,
+  });
+  const pressed = (overviewOpen: boolean, tile: import("./snapshot").RecordBoard) => {
+    const saved = useShellStore.getState();
+    const savedUi = useUiStore.getState();
+    useShellStore.setState({ rest: { navigator: { workspaces: [] }, workspace_view: { ...front, open: true, documents: false } } as unknown as SnapshotRest });
+    useUiStore.setState({ overviewOpen, screen: { kind: "workspace" } } as never);
+    const sent: Parameters<DispatchFn>[0][] = [];
+    try {
+      createActions((event) => { sent.push(event); return true; }).openRecordBoard(tile);
+      return { sent, overviewOpen: useUiStore.getState().overviewOpen };
+    } finally {
+      useShellStore.setState(saved, true);
+      useUiStore.setState(savedUi, true);
+    }
+  };
+
+  it("opens an open board in the Workspace in front even when the checkout that drew it is gone", () => {
+    // A mission worker's worktree, removed after its node merged: no catalog row.
+    const { sent } = pressed(false, board({ checkout_path: "/repo-worker" }));
+    expect(sent).toEqual([{ schema_version: 2, kind: "board_open", payload: { board: "board-1", workspace: front } }]);
+  });
+
+  it("brings the Workspace back from the Overview to show the board, as it was", () => {
+    const { sent, overviewOpen } = pressed(true, board());
+    expect(overviewOpen).toBe(false);
+    expect(sent.map((event) => event.kind)).toEqual(["board_open"]);
+    expect(sent[0]!.payload).toEqual({ board: "board-1", workspace: front });
+  });
+
+  it("sends nothing for a kept board whose checkout is gone, which has no file to open", () => {
+    const { sent } = pressed(false, board({ state: "kept", kept_path: "docs/boards/a.md", checkout_path: "/repo-worker" }));
+    expect(sent).toEqual([]);
+  });
+});

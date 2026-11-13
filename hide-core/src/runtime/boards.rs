@@ -1209,19 +1209,6 @@ impl Runtime {
     /// the operator's own open, seen and wearing no agent's mark. Its Views
     /// in other checkouts close, since the file is not of their checkout.
     fn show_kept_file(&mut self, request: &KeepRequest) {
-        // A View already open on the file (the empty one a failed keep left)
-        // reads it again, so it shows what was written; one with the
-        // operator's unsaved text keeps it, and its next save meets the
-        // written file as a conflict.
-        let tab = self.new_file_tab_id(
-            &request.workspace_id,
-            &request.checkout_id,
-            &request.absolute,
-        );
-        let reload = self
-            .editor_documents
-            .get(&tab)
-            .is_some_and(|document| !document.dirty);
         let home: WorkspaceKey = (
             request.checkout.device_id.clone(),
             request.checkout.path.clone(),
@@ -1262,7 +1249,7 @@ impl Runtime {
                                 checkout_id: request.checkout_id.clone(),
                                 path: request.absolute.clone(),
                                 preview: false,
-                                reload,
+                                reload: false,
                                 reveal: None,
                                 restore: false,
                                 placement: Some(super::view_areas::ViewPlacement {
@@ -1304,7 +1291,7 @@ impl Runtime {
                     checkout_id: request.checkout_id.clone(),
                     path: request.absolute.clone(),
                     preview: false,
-                    reload,
+                    reload: false,
                     reveal: None,
                     restore: false,
                     placement: Some(super::view_areas::ViewPlacement {

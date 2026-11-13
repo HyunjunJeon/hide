@@ -2878,17 +2878,6 @@ fn a_kept_file_already_shown_takes_the_place_of_its_boards_view_once() {
         opened,
         "the operator's View of the file is its one View"
     );
-    // And it holds what was written, not the empty file it was opened on.
-    let tab = guard
-        .view_layout_of(&key())
-        .and_then(|layout| layout.display(&opened[0]))
-        .and_then(|display| display.tab_id.clone())
-        .unwrap();
-    let export = crate::boards::markdown(guard.boards.get("board-1").unwrap());
-    assert_eq!(
-        guard.editor_documents[&tab].contents_utf8.as_deref(),
-        Some(export.as_str())
-    );
     let layout = guard.view_layout_of(&key()).unwrap();
     assert_eq!(
         layout

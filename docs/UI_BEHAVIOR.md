@@ -539,7 +539,7 @@ An agent's own `hide board delete` closes its Views the same way, so a deleted b
 
 A board whose View closed, by the operator, the View cap or a closed pane, stays open, and the session record's 결과물 lists it among the tiles: each board its session or a descendant drew, open on screen or not, with a board mark and its title, a kept one with its file's mark and path.
 Pressing an open board's tile opens it where the operator is: in the active area of the Workspace in front, whichever checkout or machine drew it (a worker's board opens in the Conductor's project checkout, a device's board in this machine's checkout, and the other way round), in front of that area, as the operator's own open: seen, and still wearing its drawing agent's mark while that agent's session runs in a pane.
-It switches nothing, neither the Workspace nor the machine in front, and a board that can no longer open moves nothing; a View of it already in that Workspace comes to the front instead, and one outside the board's own checkout is not put back after a restart.
+It switches nothing, neither the Workspace nor the machine in front (pressed in the Overview, the Workspace behind it comes back on screen as it was), opens even when the checkout that drew the board is gone, and a board that can no longer open moves nothing; a View of it already in that Workspace comes to the front instead, and one outside the board's own checkout is not put back after a restart.
 Pressing a kept board's tile opens its file; a deleted board has no tile.
 
 ### View openers and comments
