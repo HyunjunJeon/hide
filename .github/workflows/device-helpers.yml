@@ -32,6 +32,15 @@ on:
         type: string
         required: true
 
+# The repository that holds the commit to check out. Each checkout names it
+# because a caller in another repository of the with-hide organization (the
+# private publisher) sees its own name in `github.repository`; every run there
+# and in with-hide/hide keeps checking out with-hide/hide. A fork's own run
+# checks out the fork, which holds its pull request's merge commit, as the
+# upstream repository does not.
+env:
+  HIDE_SOURCE_REPOSITORY: ${{ github.repository_owner == 'with-hide' && 'with-hide/hide' || github.repository }}
+
 permissions:
   contents: read
 
@@ -55,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha }}
       - uses: pnpm/action-setup@v6
         with:
