@@ -4377,6 +4377,7 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         "path_rename" => explorer_rename(boundary, event, &kind),
         "path_move" | "path_copy" => explorer_move(boundary, event, &kind),
         "path_trash" => explorer_trash(boundary, event, &kind),
+        "board_keep" => board_keep_path(event, &kind),
         "browser_open" | "browser_state" => browser_url(boundary, event, &kind),
         "view_layout"
             if event.pointer("/payload/action").and_then(Value::as_str) == Some("navigate") =>
@@ -4848,6 +4849,16 @@ fn explorer_create(boundary: &Boundary, event: &mut Value, kind: &str) -> Option
         return Some(refused(kind, &name, Refusal::InvalidPath));
     }
     explorer_rooted_path(boundary, event, kind, "parent")
+}
+
+/// A board is kept at a path below its own checkout, which may be a
+/// device's, so no root of this machine places it: the boundary holds it to
+/// the core's rule (`hide_core::boards::keep_path_refused`), which the core
+/// checks again, and the device's host confines the write to the root it
+/// opened.
+fn board_keep_path(event: &mut Value, kind: &str) -> Option<Value> {
+    let path = payload_str(event, "path");
+    hide_core::boards::keep_path_refused(&path).map(|_| refused(kind, &path, Refusal::InvalidPath))
 }
 
 /// A rename names the item and the name it takes.
@@ -5341,6 +5352,44 @@ mod tests {
         })
         .await
         .expect("the daemon ends");
+    }
+
+    #[test]
+    fn a_board_is_kept_only_at_a_path_the_cores_rule_admits() {
+        let keep = |path: &str| json!({"schema_version": 2, "kind": "board_keep", "payload": {"board": "board-1", "path": path}});
+        for path in [
+            "docs/boards/2026-11-13-login-flow.md",
+            "docs/boards/2026-11-13-로그인-흐름-정리.md",
+        ] {
+            assert_eq!(
+                board_keep_path(&mut keep(path), "board_keep"),
+                None,
+                "{path}"
+            );
+        }
+        let mut event = keep("docs/boards/2026-11-13-login-flow.md");
+        assert_eq!(board_keep_path(&mut event, "board_keep"), None);
+        assert_eq!(
+            event,
+            keep("docs/boards/2026-11-13-login-flow.md"),
+            "passed as it came"
+        );
+        for path in ["../a.md", "/tmp/a.md", "docs/.hidden/a.md", "docs/a.sh"] {
+            let answer = board_keep_path(&mut keep(path), "board_keep").expect(path);
+            assert_eq!(
+                (
+                    &answer["type"],
+                    &answer["payload"]["kind"],
+                    &answer["payload"]["reason"]
+                ),
+                (
+                    &json!("path_refused"),
+                    &json!("board_keep"),
+                    &json!(Refusal::InvalidPath.code())
+                ),
+                "{path}"
+            );
+        }
     }
 
     #[test]

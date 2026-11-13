@@ -29,6 +29,22 @@ export type BoardBlock = {
   markdown: string;
 };
 
+/** Where the operator's keep of a board stands (`board_keep_state`). */
+export type BoardKeepState = "running" | "failed";
+
+/** Why a keep failed (`board_keep_failure`). */
+export type BoardKeepFailure = "keep_path_refused" | "keep_exists" | "keep_busy" | "keep_unknown" | "keep_failed" | "keep_open";
+
+/** The operator's keep of a board, while one runs or after one failed. */
+export type BoardKeep = {
+  /** The path below the board's checkout it is kept at. */
+  path: string;
+  state: BoardKeepState;
+  code?: BoardKeepFailure;
+  /** The host's or the rule's words for the failure. */
+  reason?: string;
+};
+
 export type BoardView = {
   /** `board-<n>`. */
   id: string;
@@ -38,6 +54,8 @@ export type BoardView = {
   revision: number;
   updated_at_unix_ms: number;
   blocks: BoardBlock[];
+  /** The operator's keep of it, while one runs or after one failed. */
+  keep?: BoardKeep;
 };
 
 /** `rest.boards`: the boards a display of the front Workspace shows. */
@@ -57,6 +75,66 @@ export function boardOf(boards: BoardsRest | undefined, id: string | undefined):
 export function boardDisplayState(state: "open" | "opening" | "waiting" | "unavailable", board: BoardView | null): "open" | "waiting" | "unavailable" {
   if (state === "unavailable") return "unavailable";
   return state === "open" && board ? "open" : "waiting";
+}
+
+/**
+ * What the head says about the operator's last keep: hided's boundary refuses
+ * a path before the core sees it, which leaves the board's own keep line as an
+ * earlier attempt left it, so a refusal of the path sent last speaks first;
+ * otherwise the core's failure, with its path, which Retry keeps again.
+ */
+export function keepNotice(keep: BoardKeep | undefined, sent: string | null, refused: string | null): { code: BoardKeepFailure; path: string } | null {
+  if (sent !== null && refused === sent) return { code: "keep_path_refused", path: sent };
+  if (keep?.state === "failed" && keep.code) return { code: keep.code, path: keep.path };
+  return null;
+}
+
+/** Where kept boards go by default, below the checkout. */
+const KEEP_FOLDER = "docs/boards/";
+/** The core's keep rule: a path of at most this many characters. */
+const KEEP_PATH_CHARS = 300;
+/** A file name on every system Hide runs on: at most this many bytes in UTF-8. */
+const FILE_NAME_BYTES = 255;
+/** Characters of the default slug, so a kept path stays short enough for Git on Windows without long paths. */
+const SLUG_CHARS = 80;
+
+/**
+ * Where `파일로 남기기` offers to keep a board (board design, section 4):
+ * `docs/boards/<YYYY-MM-DD>-<slug>.md`, the date the operator's own. The
+ * slug is the title as written (NFC): its letters, digits and their marks in
+ * any script, each run of anything else (spaces, punctuation, symbols, an
+ * emoji) one `-`, lower case where the script has case, and no `-` at
+ * either end; so `로그인 흐름 정리: 토큰 갱신` reads `로그인-흐름-정리-토큰-갱신`.
+ * Nothing a Windows, macOS or Linux file name refuses survives (no
+ * `< > : " / \ | ? *`, control character or trailing dot or space), and
+ * the name starts with the date, so it is never a reserved device name such
+ * as `CON`. It is cut between two characters at 80 characters, and sooner
+ * when the file name would pass 255 bytes; a title with nothing left gives
+ * the board's id. The core checks whatever path the
+ * operator sends.
+ */
+export function defaultKeepPath(board: { id: string; title: string }, now: Date): string {
+  const two = (value: number) => String(value).padStart(2, "0");
+  const prefix = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}-`;
+  // Lower case first: lowering can undo composition (İ), so NFC comes after.
+  const words = board.title.toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "");
+  const slug = cutSlug(words, FILE_NAME_BYTES - utf8Bytes(prefix) - utf8Bytes(".md"), Math.min(SLUG_CHARS, KEEP_PATH_CHARS - [...`${KEEP_FOLDER}${prefix}.md`].length)) || board.id;
+  return `${KEEP_FOLDER}${prefix}${slug}.md`;
+}
+
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** `slug` cut between two characters (whole graphemes) to at most `bytes` UTF-8 bytes and `chars` code points, with no `-` left at its end. */
+function cutSlug(slug: string, bytes: number, chars: number): string {
+  let kept = "";
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(slug)) {
+    const next = kept + segment;
+    if (utf8Bytes(next) > bytes || [...next].length > chars) break;
+    kept = next;
+  }
+  return kept.replace(/-+$/, "");
 }
 
 /** The board and revision a View last drew: the web's own memory, never the core's (section 3, The edit). */

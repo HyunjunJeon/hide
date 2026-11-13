@@ -3309,12 +3309,27 @@ export type RecordView = {
   lines?: string[];
   session: WorkSession;
 };
+/** A board of a session record's tree, as its 결과물 tile shows it (board design, section 3). */
+export type RecordBoard = {
+  id: string;
+  title: string;
+  state: "open" | "kept";
+  /** The machine and checkout the board was drawn in. */
+  device_id: string;
+  checkout_path: string;
+  /** A kept board's file, below its checkout's root. */
+  kept_path?: string;
+  updated_at_unix_ms: number;
+  session: WorkSession;
+};
 export type SessionRecordSection = {
   session: WorkSession | null; loading: boolean; failure: string | null; record: SessionRecord | null;
   /** The Views the record's session tree opened, the one looked at last first; absent while there are none. */
   views?: RecordView[];
   /** The Views past the core's cap, counted. */
   views_omitted?: number;
+  /** The boards the record's session tree drew that are open or kept, open or not on screen, updated last first; absent while there are none. */
+  boards?: RecordBoard[];
 };
 /**
  * A session thread (PRD session-docs-and-assistant B25-B29): the record of one

@@ -770,6 +770,7 @@ fn book() -> Vec<Board> {
     kept.state = BoardState::Kept {
         kept_path: "docs/boards/2026-11-13-plan.md".into(),
         kept_at_unix_ms: 3_600_000,
+        kept_checkout: None,
     };
     let mut deleted = board(
         "board-4",
@@ -835,6 +836,9 @@ fn a_project_with_a_board_lists_it_in_the_turn_input_within_the_records_budget()
     assert!(listed[0].get("kept_path").is_none());
     assert_eq!(listed[1]["state"], "kept");
     assert_eq!(listed[1]["kept_path"], "docs/boards/2026-11-13-plan.md");
+    // Kept in its own checkout, `/repo-wt`, named by its folder alone.
+    assert_eq!(listed[1]["kept_in"], "repo-wt");
+    assert!(listed[0].get("kept_in").is_none());
     assert_eq!(listed[1]["record"], 3, "session b's newest record");
     let sent = serde_json::to_string(input).unwrap();
     assert!(
@@ -993,6 +997,7 @@ fn a_board_read_returns_its_markdown_redacted_and_clipped_with_the_block_to_cont
     kept.state = BoardState::Kept {
         kept_path: format!("docs/boards/{SECRET}.md"),
         kept_at_unix_ms: 2,
+        kept_checkout: None,
     };
     run.boards = vec![kept, long];
     let mut pen = run.pen();

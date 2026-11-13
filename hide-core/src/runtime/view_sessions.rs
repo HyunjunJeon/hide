@@ -560,13 +560,52 @@ impl Runtime {
             return;
         };
         let (views, omitted) = self.record_views(record);
-        if held.views == views && held.views_omitted == omitted {
+        let boards = self.record_boards(record);
+        if held.views == views && held.views_omitted == omitted && held.boards == boards {
             return;
         }
         let mut next = crate::links::ledger::SessionRecordSnapshot::clone(held);
         next.views = views;
         next.views_omitted = omitted;
+        next.boards = boards;
         self.snapshot.session_record = Some(Arc::new(next));
+    }
+
+    /// The boards `record`'s session and its descendants drew that are open
+    /// or kept, updated last first, at most `RECORD_VIEWS`: a deleted board
+    /// is nothing to get back.
+    fn record_boards(
+        &self,
+        record: &crate::links::ledger::SessionRecord,
+    ) -> Vec<crate::model::RecordBoardSnapshot> {
+        use crate::boards::BoardState;
+        let sessions = record_sessions(record);
+        let mut found: Vec<crate::model::RecordBoardSnapshot> = self
+            .boards
+            .boards()
+            .filter(|board| !matches!(board.state, BoardState::Deleted { .. }))
+            .filter_map(|board| {
+                let session = sessions.iter().find(|session| ***session == board.owner)?;
+                // A kept board is where its file is.
+                let (checkout, kept_path) = match board.kept_file() {
+                    Some((checkout, kept_path)) => (checkout, Some(kept_path.to_owned())),
+                    None => (&board.checkout, None),
+                };
+                Some(crate::model::RecordBoardSnapshot {
+                    id: board.id.clone(),
+                    title: board.title.clone(),
+                    state: board.state.name(),
+                    device_id: checkout.device_id.clone(),
+                    checkout_path: checkout.path.clone(),
+                    kept_path,
+                    updated_at_unix_ms: board.updated_at_unix_ms,
+                    session: (*session).clone(),
+                })
+            })
+            .collect();
+        found.sort_by_key(|board| std::cmp::Reverse(board.updated_at_unix_ms));
+        found.truncate(RECORD_VIEWS);
+        found
     }
 
     /// The outputs among the Views `record`'s session and its descendants
@@ -577,16 +616,8 @@ impl Runtime {
         &self,
         record: &crate::links::ledger::SessionRecord,
     ) -> (Vec<crate::model::RecordViewSnapshot>, usize) {
-        use crate::links::ledger::{SessionIdentity, SessionRecord};
-        fn tree<'a>(record: &'a SessionRecord, into: &mut Vec<&'a SessionIdentity>) {
-            into.push(&record.session);
-            for child in &record.children {
-                tree(child, into);
-            }
-        }
-        let mut sessions = Vec::new();
-        tree(record, &mut sessions);
-        let sessions: Vec<(&SessionIdentity, Option<String>)> = sessions
+        use crate::links::ledger::SessionIdentity;
+        let sessions: Vec<(&SessionIdentity, Option<String>)> = record_sessions(record)
             .into_iter()
             .map(|session| {
                 (
@@ -752,6 +783,17 @@ struct ViewTile {
     label: String,
     document_kind: Option<crate::model::DocumentKind>,
     lines: Vec<String>,
+}
+
+/// The sessions of a record's tree: its own, then each descendant's.
+fn record_sessions(
+    record: &crate::links::ledger::SessionRecord,
+) -> Vec<&crate::links::ledger::SessionIdentity> {
+    let mut sessions = vec![&record.session];
+    for child in &record.children {
+        sessions.extend(record_sessions(child));
+    }
+    sessions
 }
 
 /// Whether a View is a 결과물, something made for a person to look at, by

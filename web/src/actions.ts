@@ -709,6 +709,19 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
    * (S7 B20). A display is asked for from where it stands in this frame, so
    * a move or split of the active view waits for the frame that lands it.
    */
+  /** Whether the Workspace screen shows the checkout at `checkoutPath` on `deviceId` in front now, so its documents can come forward in place. */
+  const checkoutInFront = (deviceId: string, checkoutPath: string) => {
+    const front = frontViewWorkspace();
+    const state = ui();
+    return !state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === deviceId && front.path === checkoutPath;
+  };
+
+  /** The catalog's project and checkout at `checkoutPath` on `deviceId`, either missing once it is no longer open. */
+  const catalogCheckoutAt = (deviceId: string, checkoutPath: string) => {
+    const project = catalogWorkspaces(rest()).find((row) => row.device_id === deviceId && row.checkouts.some((checkout) => checkout.path === checkoutPath));
+    return { project, checkout: project?.checkouts.find((row) => row.path === checkoutPath) };
+  };
+
   const followFocus = (frame: ViewFrame, target: { displayId: string } | { areaId: string }) => {
     const workspace = workspaceKey(frame.workspace);
     if ("areaId" in target) return ui().setViewFocusRequest({ workspace, areaId: target.areaId });
@@ -3400,21 +3413,72 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
     },
 
     /**
+     * A board's tile in the session record (board design, section 3): an open
+     * board opens as the operator's own View in the Workspace in front
+     * (`board_open`), wherever it was drawn; a kept board opens its file in
+     * the checkout it was kept in.
+     */
+    openRecordBoard(board: import("./snapshot").RecordBoard) {
+      // Pressed in the Overview, the Workspace behind it comes back on screen,
+      // as it was, to show what the tile opens.
+      const leaveOverview = () => {
+        const state = ui();
+        if (state.overviewOpen || state.screen?.kind === "main" || state.screen?.kind === "desk" || state.screen?.kind === "missions") this.closeOverview();
+      };
+      if (board.state === "kept" && board.kept_path) {
+        const { project, checkout } = catalogCheckoutAt(board.device_id, board.checkout_path);
+        if (!project || !checkout) return diagnostic(`record board: ${board.checkout_path} is no longer open on ${board.device_id}`);
+        leaveOverview();
+        const device = deviceField(board.device_id, localDeviceId(rest()));
+        const path = `${board.checkout_path.replace(/\/+$/, "")}/${board.kept_path}`;
+        if (checkoutInFront(board.device_id, board.checkout_path)) {
+          showDocuments();
+          followOpen(path, "file");
+          dispatch({ schema_version: 2, kind: "file_open", payload: { path, workspace_id: project.id, checkout_id: checkout.id, preview: false, ...device } });
+          return;
+        }
+        dispatch({ schema_version: 2, kind: "reveal_path", payload: { path, workspace_id: project.id, checkout_id: checkout.id, is_directory: false, ...device } });
+        return;
+      }
+      // An open board opens where the operator is: in the Workspace in front,
+      // whichever checkout or machine drew it, even one no longer open, one
+      // event that switches nothing. Pressed in the Overview, the Workspace
+      // behind it comes back on screen, as it was, to show it.
+      const front = frontViewWorkspace();
+      if (!front) return diagnostic(`record board: no Workspace in front to open ${board.id} in`);
+      leaveOverview();
+      ui().setStackFront("view");
+      dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id, workspace: { device_id: front.device_id, path: front.path } } });
+    },
+
+    /**
+     * `파일로 남기기` on a board's View in `workspace`: the board written into a
+     * new file at `path` below that Workspace's checkout, the one the operator
+     * is looking at, which is not the board's own when an ancestor showed it
+     * there (board design, section 4).
+     */
+    keepBoard(board: string, path: string, workspace: { device_id: string; path: string }) {
+      dispatch({ schema_version: 2, kind: "board_keep", payload: { board, path, workspace } });
+    },
+
+    /** `지우기`, confirmed: the board and every View of it go. */
+    deleteBoard(board: string) {
+      dispatch({ schema_version: 2, kind: "board_delete", payload: { board } });
+    },
+
+    /**
      * A View of a checkout, wherever the screen is: in the Workspace on
      * screen it comes to the front of the documents; anywhere else the
      * checkout comes forward naming it. A device's View needs its device's
      * Workspace in front first, so there only the Workspace comes forward.
      */
     openViewAt(deviceId: string, checkoutPath: string, displayId: string) {
-      const front = frontViewWorkspace();
-      const state = ui();
-      if (!state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === deviceId && front.path === checkoutPath) {
+      if (checkoutInFront(deviceId, checkoutPath)) {
         showDocuments();
         focusView(displayId, true);
         return;
       }
-      const project = catalogWorkspaces(rest()).find((row) => row.device_id === deviceId && row.checkouts.some((checkout) => checkout.path === checkoutPath));
-      const checkout = project?.checkouts.find((row) => row.path === checkoutPath);
+      const { project, checkout } = catalogCheckoutAt(deviceId, checkoutPath);
       if (!project || !checkout) return diagnostic(`record view: ${checkoutPath} is no longer open on ${deviceId}`);
       const node = localDeviceId(rest());
       if (deviceId !== node) return this.openWorkspace(deviceId, project.id, checkout.id);

@@ -1,4 +1,4 @@
-import { GlobeIcon, PackageIcon } from "lucide-react";
+import { GlobeIcon, LayoutDashboardIcon, PackageIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Actions } from "./actions";
 import { browserStillOf, addressShown } from "./browserViews";
@@ -48,19 +48,34 @@ export function RecordGallery({ tiles, omitted, actions }: { tiles: readonly Gal
 }
 
 function keyOf(tile: GalleryTile): string {
+  if (tile.kind === "board") return `board:${tile.board.id}`;
   return tile.kind === "view" ? `view:${tile.view.device_id}:${tile.view.checkout_path}:${tile.view.display_id}` : `artifact:${tile.name}`;
 }
 
 /** An item with no picture: its kind's mark, its name and one short muted detail. */
 function Row({ tile, actions }: { tile: GalleryTile; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const detail = rowDetail(tile);
+  const label = tile.kind === "view" ? tile.view.label : tile.kind === "board" ? tile.board.title : tile.name;
   const words = <>
-    <span className="min-w-0 shrink truncate text-subtle-foreground" data-record-view-label={tile.kind === "view" ? "true" : undefined} data-record-artifact={tile.kind === "artifact" ? tile.name : undefined}>{tile.kind === "view" ? tile.view.label : tile.name}</span>
+    <span className="min-w-0 shrink truncate text-subtle-foreground" data-record-view-label={tile.kind === "view" ? "true" : undefined} data-record-artifact={tile.kind === "artifact" ? tile.name : undefined}>{label}</span>
     {detail ? <span className="min-w-0 flex-1 truncate text-micro text-muted-foreground" data-record-view-detail="true">{detail}</span> : null}
   </>;
   if (tile.kind === "artifact") return <div className={ROW} title={tile.name}><PackageIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />{words}</div>;
-  return <button type="button" className={cn(ROW, "hover:bg-accent")} title={[tile.view.label, tile.view.url ?? tile.view.path].filter(Boolean).join("\n")} onClick={() => actions.openRecordView(tile.view)} data-record-view={tile.view.display_id} data-record-view-thumb="row">
-    <Mark view={tile.view} />{words}
+  // A board's tile opens it again, or its file once kept; a View's brings it forward.
+  const board = tile.kind === "board" ? tile.board : null;
+  const kept = board?.state === "kept" && board.kept_path ? board.kept_path : null;
+  const title = board ? [t("boardView.identity", { title: board.title }), kept ? t("boardView.tileKept", { path: kept }) : null] : tile.kind === "view" ? [tile.view.label, tile.view.url ?? tile.view.path] : [];
+  const mark = board ? (kept ? <FileMark icon={fileIcon(kept)} className="size-(--size-icon-sm)" /> : <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />) : tile.kind === "view" ? <Mark view={tile.view} /> : null;
+  const press = () => {
+    if (tile.kind === "board") actions.openRecordBoard(tile.board);
+    else if (tile.kind === "view") actions.openRecordView(tile.view);
+  };
+  const marks = tile.kind === "board"
+    ? { "data-record-board": tile.board.id, "data-record-board-state": tile.board.state }
+    : tile.kind === "view" ? { "data-record-view": tile.view.display_id, "data-record-view-thumb": "row" } : {};
+  return <button type="button" className={cn(ROW, "hover:bg-accent")} title={title.filter(Boolean).join("\n")} onClick={press} {...marks}>
+    {mark}{words}
   </button>;
 }
 

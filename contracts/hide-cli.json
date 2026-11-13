@@ -6838,6 +6838,7 @@
                 "board_not_yours",
                 "board_deleted",
                 "board_kept",
+                "board_keeping",
                 "board_moved",
                 "quote_refused",
                 "quote_unreadable"
@@ -6897,6 +6898,7 @@
                 "board_not_yours",
                 "board_deleted",
                 "board_kept",
+                "board_keeping",
                 "board_moved",
                 "quote_refused",
                 "quote_unreadable"
@@ -6988,13 +6990,14 @@
             "refusals": [
                 "board_unknown",
                 "board_not_yours",
-                "board_deleted"
+                "board_deleted",
+                "board_keeping"
             ],
             "repeats_at_most": null,
             "rest": null
         }
     ],
-    "digest": "sha256:445d8cbade2b9b0507f1d72d5dcc5f90a6e3874b55b27929bb3f098323cb9dfe",
+    "digest": "sha256:e5068d6dbabaeae6d3f16d0d96fdb5473886b6f4a70ec95aee8cf466b434c405",
     "envelopes": {
         "agent": {
             "answer": "value",

@@ -7,8 +7,8 @@ import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
-import { BoardView } from "./BoardView";
-import { boardDisplayState, boardOf } from "./boards";
+import { BoardControls, BoardKeepNotice, BoardView } from "./BoardView";
+import { boardDisplayState, boardOf, defaultKeepPath, keepNotice } from "./boards";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
 import { Badge } from "./components/ui/badge";
@@ -172,7 +172,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
   const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.kind === "external") return <ExternalDisplay display={display} workspace={workspace} actions={actions} />;
-  if (display.kind === "board") return <BoardDisplay display={display} actions={actions} />;
+  if (display.kind === "board") return <BoardDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} workspace={workspace} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
@@ -200,9 +200,19 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
  * frame, so an agent's edit is drawn in place whether or not the operator has
  * looked; the display holds only the board's id (board design, section 3).
  */
-function BoardDisplay({ display, actions }: { display: ViewDisplaySnapshot; actions: Actions }) {
+function BoardDisplay({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const board = useShellStore((s) => boardOf(s.rest?.boards, display.board));
+  // hided refuses a path outside the keep rule before the core sees it; that
+  // refusal reads as the core's own (`keep_path_refused`) for the path sent.
+  const refused = useShellStore((s) => (s.pathRefusal?.kind === "board_keep" ? s.pathRefusal.path : null));
+  const [sent, setSent] = useState<string | null>(null);
+  const keep = (path: string) => {
+    if (!board) return;
+    setSent(path);
+    actions.keepBoard(board.id, path, { device_id: workspace.device_id, path: workspace.path });
+  };
+  const failed = keepNotice(board?.keep, sent, refused);
   return (
     <RenderBoundary region="board" fallback={<AreaEmpty state="board-failed" text={t("shell.renderFailed")} />}>
       <BoardView
@@ -210,6 +220,8 @@ function BoardDisplay({ display, actions }: { display: ViewDisplaySnapshot; acti
         state={boardDisplayState(display.state, board)}
         label={display.label}
         opener={display.opener ? <OpenerMark opener={display.opener} actions={actions} /> : null}
+        controls={board ? <BoardControls board={board} defaultPath={defaultKeepPath(board, new Date())} onKeep={keep} onDelete={() => actions.deleteBoard(board.id)} /> : null}
+        notice={failed ? <BoardKeepNotice code={failed.code} path={failed.path} onRetry={() => keep(failed.path)} /> : null}
         onCloseView={() => actions.closeView(display.id)}
       />
     </RenderBoundary>

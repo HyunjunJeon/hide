@@ -1547,6 +1547,7 @@ pub const COMMANDS: &[Spec] = &[
             "board_not_yours",
             "board_deleted",
             "board_kept",
+            "board_keeping",
             "board_moved",
             "quote_refused",
             "quote_unreadable",
@@ -1571,6 +1572,7 @@ pub const COMMANDS: &[Spec] = &[
             "board_not_yours",
             "board_deleted",
             "board_kept",
+            "board_keeping",
             "board_moved",
             "quote_refused",
             "quote_unreadable",
@@ -1617,7 +1619,12 @@ pub const COMMANDS: &[Spec] = &[
         options: &[],
         rest: None,
         answers: &["board"],
-        refusals: &["board_unknown", "board_not_yours", "board_deleted"],
+        refusals: &[
+            "board_unknown",
+            "board_not_yours",
+            "board_deleted",
+            "board_keeping",
+        ],
     },
 ];
 

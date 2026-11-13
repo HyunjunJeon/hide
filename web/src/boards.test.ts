@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { boardDisplayState, boardOf, calloutBody, changedBlocks, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardState, type BoardView } from "./boards";
+import { boardDisplayState, boardOf, calloutBody, changedBlocks, defaultKeepPath, keepNotice, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardKeepFailure, type BoardKeepState, type BoardState, type BoardView } from "./boards";
 import type { ViewDisplaySnapshot } from "./snapshot";
 import { showsSameDocument } from "./viewLayout";
 import { boardBlock, exportBlock } from "./gallery/boardSceneData";
@@ -87,6 +87,10 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
     expect(Object.keys(kinds)).toEqual(contract.board_block_kind);
     expect(Object.keys(tones)).toEqual(contract.board_callout_tone);
     expect(Object.keys(states)).toEqual(contract.board_state);
+    const keeps: Record<BoardKeepState, true> = { running: true, failed: true };
+    const failures: Record<BoardKeepFailure, true> = { keep_path_refused: true, keep_exists: true, keep_busy: true, keep_unknown: true, keep_failed: true, keep_open: true };
+    expect(Object.keys(keeps)).toEqual(contract.board_keep_state);
+    expect(Object.keys(failures)).toEqual(contract.board_keep_failure);
   });
 
   it("counts two Views the same content only when they show one board", () => {
@@ -94,5 +98,66 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
     expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-1"))).toBe(true);
     expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-2"))).toBe(false);
     expect(showsSameDocument(display("d1", "board-1"), display("d2"))).toBe(false);
+  });
+});
+
+describe("where 파일로 남기기 offers to keep a board (board design, section 4)", () => {
+  const on = new Date(2026, 10, 3, 23, 59);
+  const keep = (title: string) => defaultKeepPath({ id: "board-4", title }, on);
+  const name = (path: string) => path.slice("docs/boards/".length);
+  it("is docs/boards/, the operator's date, then the title's words in lower case", () => {
+    expect(keep("Login flow: v2 (draft)")).toBe("docs/boards/2026-11-03-login-flow-v2-draft.md");
+  });
+  it("keeps a Korean title's own letters, and Korean mixed with English", () => {
+    expect(keep("로그인 흐름 정리: 토큰 갱신")).toBe("docs/boards/2026-11-03-로그인-흐름-정리-토큰-갱신.md");
+    expect(keep("API 설계 v2")).toBe("docs/boards/2026-11-03-api-설계-v2.md");
+  });
+  it("keeps Japanese and Chinese as written, composed (NFC)", () => {
+    expect(keep("ログイン設計")).toBe("docs/boards/2026-11-03-ログイン設計.md");
+    expect(keep("登录 流程")).toBe("docs/boards/2026-11-03-登录-流程.md");
+    const decomposed = "로그인".normalize("NFD");
+    expect(keep(decomposed)).toBe("docs/boards/2026-11-03-로그인.md");
+  });
+  it("falls back to the board's id when no letter or digit is left", () => {
+    expect(keep("🚀✨")).toBe("docs/boards/2026-11-03-board-4.md");
+    expect(keep("...")).toBe("docs/boards/2026-11-03-board-4.md");
+  });
+  it("leaves nothing a Windows, macOS or Linux file name refuses", () => {
+    const path = keep('a<b>c:d"e/f\\g|h?i*j\u0001k. ');
+    expect(path).toBe("docs/boards/2026-11-03-a-b-c-d-e-f-g-h-i-j-k.md");
+    expect(name(path)).not.toMatch(/[<>:"/\\|?*]|[. ]\.md$/);
+    expect([...name(path)].some((letter) => letter.charCodeAt(0) < 0x20)).toBe(false);
+  });
+  it("cuts a long title between two characters, at 80 characters and within 255 bytes for the name", () => {
+    for (const title of ["갱".repeat(200), "word ".repeat(80), "가a".repeat(150)]) {
+      const path = keep(title);
+      expect(new TextEncoder().encode(name(path)).length).toBeLessThanOrEqual(255);
+      expect([...path].length).toBeLessThanOrEqual(300);
+      expect(path).toMatch(/^docs\/boards\/2026-11-03-[^-].*[^-]\.md$/);
+      expect(path.includes("\ufffd")).toBe(false);
+    }
+    expect(name(keep("갱".repeat(200)))).toBe(`2026-11-03-${"갱".repeat(80)}.md`);
+    expect(name(keep("word ".repeat(80)))).toBe(`2026-11-03-${"word-".repeat(16).slice(0, -1)}.md`);
+    // Four-byte letters reach 255 bytes first: 60 of them are 240 bytes,
+    // with the date before them and `.md` after.
+    expect([...name(keep("𠀀".repeat(100)))].length).toBe(11 + 60 + 3);
+  });
+  it("is composed (NFC) even where lower case undoes the composition", () => {
+    const path = keep("İSTANBUL Ǆ");
+    expect(path).toBe(path.normalize("NFC"));
+  });
+});
+
+describe("what the head says about the last keep (board design, section 4)", () => {
+  const exists = { path: "docs/taken.md", state: "failed" as const, code: "keep_exists" as const, reason: "docs/taken.md already holds something else" };
+  it("shows a path the boundary refused after a keep the core refused, with that path", () => {
+    expect(keepNotice(exists, "../x.md", "../x.md")).toEqual({ code: "keep_path_refused", path: "../x.md" });
+  });
+  it("shows the core's refusal after a path the boundary refused, with its own path", () => {
+    expect(keepNotice(exists, "docs/taken.md", "../x.md")).toEqual({ code: "keep_exists", path: "docs/taken.md" });
+  });
+  it("says nothing while a keep runs, or once it went through", () => {
+    expect(keepNotice({ path: "docs/a.md", state: "running" }, "docs/a.md", "../x.md")).toBeNull();
+    expect(keepNotice(undefined, "docs/a.md", null)).toBeNull();
   });
 });

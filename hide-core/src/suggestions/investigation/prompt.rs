@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::super::ledger::{RecordEntry, RecordId, RecordIndex};
 use super::super::notebook::{Line, Notebook, Stage};
 use super::super::policy;
-use crate::boards::{Board, BoardState};
+use crate::boards::Board;
 use crate::session_excerpt::mask;
 
 pub(crate) const FEATURE: &str = "suggestions_investigation";
@@ -357,8 +357,12 @@ fn boards(boards: &[Board], index: &RecordIndex, now_unix_ms: u64) -> Value {
             if let Some(record) = record {
                 item["record"] = json!(record);
             }
-            if let BoardState::Kept { kept_path, .. } = &board.state {
+            // A kept board names its file and the checkout that holds it, by
+            // that folder's name alone: no path of the operator's machine
+            // reaches the model.
+            if let Some((checkout, kept_path)) = board.kept_file() {
                 item["kept_path"] = json!(mask(kept_path));
+                item["kept_in"] = json!(mask(hide_platform::path::wire_name(&checkout.path)));
             }
             item
         })

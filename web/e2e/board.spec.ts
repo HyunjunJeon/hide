@@ -181,3 +181,84 @@ test("a board the operator looked at shows the agent's later edit in place", asy
     engine.stop();
   }
 });
+
+// The person's side of a board (board design, section 4): 파일로 남기기 writes the board into a new file of the
+// checkout and the same place shows that file; a board whose View was closed comes back from the session
+// record's 결과물; and 지우기, once confirmed, takes the View away. The core tests prove the path rules, the
+// half failure and the record; only the page proves the head's popover, the dialog and the tile reach them.
+test("the operator keeps a board as a file, opens a closed one from the record, and deletes it", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const engine = await startFixture({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const boardFile = writeBoardFiles(engine);
+    const checkout = path.join(engine.root, "fixture");
+    daemon = await startHided(engine, "board-keep");
+    const [pane, other] = engine.panes;
+    const agent = await agentPane(engine, daemon.stateDir, pane!);
+    const board = async (args: string[]) => answer(await agent(["board", ...args]));
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const row = page.locator(`nav[data-sidebar] [data-pane="${pane}"]`).first();
+    await page.locator(`[data-pane-view="${other}"] .xterm-screen`).click();
+    await expect(page.locator(`[data-pane-view="${other}"]`)).toHaveAttribute("data-focused", "true");
+    // A Korean title: the default file name keeps its letters as written.
+    expect((await board(["new", "--title", "로그인 흐름 정리: 토큰 갱신", "--file", boardFile])).ok).toBe(true);
+    await row.locator(`[data-agent-open="${pane}"]`).click();
+    const kept = page.locator('[data-board-view="board-1"]');
+    await expect(kept.locator('[data-board-block="b1"]')).toContainText("The first text.");
+
+    // Keep: the popover offers docs/boards/<date>-<slug>.md, and accepting it writes the export there.
+    await kept.locator("[data-board-keep]").click();
+    const field = page.locator("[data-board-keep-popover] [data-board-keep-path]");
+    await expect(field).toBeVisible();
+    const offered = await field.inputValue();
+    expect(offered).toMatch(/^docs\/boards\/\d{4}-\d{2}-\d{2}-로그인-흐름-정리-토큰-갱신\.md$/);
+    await screenshot(page, "keep-path-popover");
+    await page.locator("[data-board-keep-popover] [data-board-keep-confirm]").click();
+    const file = path.join(checkout, ...offered.split("/"));
+    await expect.poll(() => fs.existsSync(file), { message: `${offered} written` }).toBe(true);
+    const export_ = (await board(["show", "board-1"])).result!.markdown!;
+    expect(fs.readFileSync(file, "utf8")).toBe(export_);
+    // The same place shows that file now, and no board View is left.
+    await expect(front(page)).toHaveAttribute("aria-label", new RegExp(path.basename(offered).replaceAll(".", "\\.")));
+    await expect(page.locator("[data-board-view]")).toHaveCount(0);
+    await screenshot(page, "keep-file-in-place");
+    // The agent's next edit names the file to edit instead.
+    const edit = (id: string) => board(["edit", id, "--json", JSON.stringify([{ op: "update", id: "b1", changes: { text: "Later text" } }])]);
+    const afterKeep = await edit("board-1");
+    expect(afterKeep).toMatchObject({ ok: false, reason: "board_kept" });
+    expect(afterKeep.next_action).toContain(offered);
+
+    // A second board, looked at and closed, comes back from the session record's 결과물.
+    expect((await board(["new", "--title", "Cache layout", "--file", boardFile])).ok).toBe(true);
+    await row.locator(`[data-agent-open="${pane}"]`).click();
+    await expect(front(page)).toHaveAttribute("aria-label", /Cache layout/);
+    const cacheTab = page.locator('[data-view-tab-bar] [role="tab"]').filter({ hasText: "Cache layout" });
+    await cacheTab.locator('button[aria-label^="Close view"]').click();
+    await expect(cacheTab).toHaveCount(0);
+    await page.locator(`[data-pane-view="${pane}"] [data-pane-record]`).click();
+    const record = page.locator('[data-session-record="lane"]');
+    const tile = record.locator('[data-record-board="board-2"]');
+    await expect(tile).toBeVisible();
+    await expect(record.locator('[data-record-board="board-1"]')).toHaveAttribute("data-record-board-state", "kept");
+    await screenshot(page, "record-board-tiles");
+    await tile.click();
+    await expect(cacheTab).toHaveCount(1);
+    await expect(front(page)).toHaveAttribute("aria-label", /Cache layout/);
+    const again = page.locator('[data-board-view="board-2"]');
+    await expect(again.locator('[data-board-block="b1"]')).toContainText("The first text.");
+
+    // Delete, confirmed once: the View goes and the agent learns the board was deleted.
+    await again.locator("[data-board-delete]").click();
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await screenshot(page, "delete-confirm");
+    await page.locator("[data-board-delete-confirm]").click();
+    await expect(page.locator('[data-board-view="board-2"]')).toHaveCount(0);
+    expect(await edit("board-2")).toMatchObject({ ok: false, reason: "board_deleted" });
+    await expect(record.locator('[data-record-board="board-2"]')).toHaveCount(0);
+  } finally {
+    daemon?.stop();
+    engine.stop();
+  }
+});

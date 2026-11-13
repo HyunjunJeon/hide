@@ -479,7 +479,7 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
-A board's View waits only until its board reaches the window; a board that was deleted, or went with its session's records, reads `This board was deleted.` with Close view, and no Retry.
+A board's View waits only until its board reaches the window; a deleted board's Views close, and a board that went with its session's records reads `This board was deleted.` with Close view, and no Retry.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and its widths, a pinned lane docked and an unpinned one over the agents; unsaved text returns from the browser's drafts, and the engine's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 The engine connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
@@ -526,6 +526,21 @@ The View draws the board's head (its title, how long since it changed and its op
 What the agent changes reaches the View in place, with no reload, even after the operator looked; the blocks the change touched are marked for a moment.
 Each board is one View in a Workspace: an open of a board already shown brings that View forward.
 A board takes no comment, and the phone shows no board.
+
+The head of an open board carries `파일로 남기기` and `지우기` (`Keep as file`, `Delete`) before its opener's mark; a kept board's head carries neither.
+`파일로 남기기` opens a popover with one path field, filled with `docs/boards/<YYYY-MM-DD>-<slug>.md`: the operator's date, and the title as written, its letters and digits in any script kept, each run of anything else one `-`, lower case where the script has case (`로그인 흐름 정리: 토큰 갱신` gives `docs/boards/<date>-로그인-흐름-정리-토큰-갱신.md`); it is cut between two characters at 80 characters, sooner when the file name would pass 255 bytes, and a title with no letter or digit gives the board's id.
+`남기기` writes the board, as the Markdown its View draws with a `#` title line, into a new file at that path below the checkout of the Workspace the View is in, making the folders it needs; Git is not touched.
+That is the checkout the operator is looking at: a board a parent agent showed in its own checkout (a mission's Conductor showing a worker's board in the project) is kept there, not in the worker's worktree, which goes once its work merges.
+The path is refused unless it ends in `.md`, stays below the checkout with no `.` or `..` name, has no name starting with `.`, and is at most 300 characters; a file there that already holds anything is never written over.
+While it is written the button reads `남기는 중…` and both actions rest; once written, the same place in the same area shows that file's View (or, when that View was closed meanwhile, the checkout's active area does), the operator's own and seen, and the board is kept: the agent's next change to it is refused with the file to edit instead.
+A keep that fails says why on a line under the head (the path refused, a file already there, the device busy, an unknown result, or another failure), with the path and `다시 시도`, which keeps it at the same path; an empty file left by a failed write is written into, and one that has been written into meanwhile is not; a keep at a file whose View is open in that Workspace is refused, saying so, until its tab is closed, so no View shows the file as it was before the board was written.
+`지우기` asks once in a dialog, `보드를 지울까요? 되돌릴 수 없어요.`, with `지우기` and `취소`; confirming deletes the board, closes every View of it in every checkout, and its agent's next command is told it was deleted.
+An agent's own `hide board delete` closes its Views the same way, so a deleted board never waits in Needs You.
+
+A board whose View closed, by the operator, the View cap or a closed pane, stays open, and the session record's 결과물 lists it among the tiles: each board its session or a descendant drew, open on screen or not, with a board mark and its title, a kept one with its file's mark and path.
+Pressing an open board's tile opens it where the operator is: in the active area of the Workspace in front, whichever checkout or machine drew it (a worker's board opens in the Conductor's project checkout, a device's board in this machine's checkout, and the other way round), in front of that area, as the operator's own open: seen, and still wearing its drawing agent's mark while that agent's session runs in a pane.
+It switches nothing, neither the Workspace nor the machine in front (pressed in the Overview, the Workspace behind it comes back on screen as it was), opens even when the checkout that drew the board is gone, and a board that can no longer open moves nothing; a View of it already in that Workspace comes to the front instead, and one outside the board's own checkout is not put back after a restart.
+Pressing a kept board's tile opens its file; a deleted board has no tile.
 
 ### View openers and comments
 

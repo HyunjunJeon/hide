@@ -168,8 +168,15 @@ pub enum Remover {
 pub enum BoardState {
     Open,
     Kept {
+        /// The file, below `kept_checkout`.
         kept_path: String,
         kept_at_unix_ms: u64,
+        /// The checkout the operator kept it in: the one whose View they
+        /// pressed keep in, which is not the board's own when an ancestor
+        /// showed it in its checkout. Absent in a record written before it
+        /// was kept anywhere but the board's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kept_checkout: Option<BoardCheckout>,
     },
     Deleted {
         deleted_by: Remover,
@@ -443,6 +450,46 @@ pub fn quote_path_refused(path: &str) -> Option<String> {
             crate::suggestions::policy::READ_PATH_CHARS
         )),
     }
+}
+
+/// Characters of the path a board is kept at (board design, section 4).
+pub const KEEP_PATH_CHARS: usize = 300;
+
+/// Why `path` cannot be where the operator keeps a board, or none when it
+/// can: a Markdown file below the board's checkout root, as every machine
+/// spells it (`/` between names), with no `.` or `..` name, no name that
+/// starts with `.` (a dot folder is one Hide AI and other people do not look
+/// in), and no `\`, which a Windows checkout would read as a folder break.
+/// The rule names nothing of one system, so it holds for a checkout on any
+/// device; whether that device's system can hold each name is its host's to
+/// judge when it makes the item.
+pub fn keep_path_refused(path: &str) -> Option<String> {
+    if path.chars().count() > KEEP_PATH_CHARS {
+        return Some(format!("is longer than {KEEP_PATH_CHARS} characters"));
+    }
+    if path.contains('\\') || path.chars().any(char::is_control) {
+        return Some("holds a \\ or a control character".into());
+    }
+    let relative = match hide_platform::path::RelPath::parse(path) {
+        Ok(relative) if !relative.is_root() => relative,
+        _ => {
+            return Some(
+                "is not a path below the checkout's root, with / between names and no empty, . or .. name"
+                    .into(),
+            );
+        }
+    };
+    if relative
+        .as_str()
+        .split('/')
+        .any(|name| name.starts_with('.'))
+    {
+        return Some("has a name that starts with .".into());
+    }
+    if !path.ends_with(".md") {
+        return Some("does not end in .md".into());
+    }
+    None
 }
 
 /// A block's body as the agent wrote it at `at`, checked and with its text
@@ -778,9 +825,7 @@ pub(crate) fn check_changeable(board: &Board, revision: Option<u64>) -> Result<(
     match &board.state {
         BoardState::Open => {}
         BoardState::Deleted { .. } => return Err("board_deleted".into()),
-        BoardState::Kept { kept_path, .. } => {
-            return Err(refused("board_kept", format!("its file is {kept_path}")));
-        }
+        BoardState::Kept { .. } => return Err(refused("board_kept", kept_where(board))),
     }
     match revision {
         Some(revision) if revision != board.revision => Err(refused(
@@ -982,6 +1027,40 @@ fn apply_edit(board: &mut Board, at: &str, edit: Edit, revision: u64) -> Result<
         }
     }
     Ok(())
+}
+
+/// Where a kept board's file is, in the words a `board_kept` refusal gives
+/// the agent: the file, and the checkout it is in when that is not the
+/// board's own.
+pub(crate) fn kept_where(board: &Board) -> String {
+    let BoardState::Kept {
+        kept_path,
+        kept_checkout,
+        ..
+    } = &board.state
+    else {
+        return String::new();
+    };
+    match kept_checkout {
+        Some(checkout) if *checkout != board.checkout => {
+            format!("its file is {kept_path} in the checkout {}", checkout.path)
+        }
+        _ => format!("its file is {kept_path}"),
+    }
+}
+
+impl Board {
+    /// The checkout a kept board's file is in, and the file below it.
+    pub fn kept_file(&self) -> Option<(&BoardCheckout, &str)> {
+        match &self.state {
+            BoardState::Kept {
+                kept_path,
+                kept_checkout,
+                ..
+            } => Some((kept_checkout.as_ref().unwrap_or(&self.checkout), kept_path)),
+            _ => None,
+        }
+    }
 }
 
 /// The stub a deleted board leaves: its id, owner, checkout and title, and
@@ -1221,6 +1300,9 @@ pub fn next_action(code: &str) -> &'static str {
         }
         "board_kept" => {
             "The operator kept that board as a file; edit that file instead, as the reason names it"
+        }
+        "board_keeping" => {
+            "The operator is keeping that board as a file right now; run hide board show <id> in a moment, then edit the file it was kept as, or run the command again if the keep failed"
         }
         "board_moved" => {
             "The board changed since that revision; read it with hide board show <id> --json, then run the command again with its revision"
@@ -1661,6 +1743,7 @@ mod tests {
             "board_unknown",
             "board_not_yours",
             "board_deleted",
+            "board_keeping",
             "board_store_unavailable",
             "board_session_unknown",
             "quote_refused",
@@ -1668,5 +1751,46 @@ mod tests {
         ]) {
             assert_ne!(next_action(refusal), fallback, "{refusal}");
         }
+    }
+
+    #[test]
+    fn a_board_is_kept_only_as_a_markdown_file_below_its_checkout_outside_dot_folders() {
+        for path in [
+            "docs/boards/2026-11-13-login-flow.md",
+            "notes.md",
+            "a/b/c/d.md",
+            "디자인/보드.md",
+        ] {
+            assert_eq!(keep_path_refused(path), None, "{path}");
+        }
+        let refused = |path: &str| keep_path_refused(path).unwrap_or_else(|| panic!("{path} kept"));
+        for path in [
+            "",
+            "/docs/a.md",
+            "../a.md",
+            "docs/../a.md",
+            "docs/./a.md",
+            "docs//a.md",
+            "docs/a.md/",
+        ] {
+            assert!(
+                refused(path).contains("below the checkout's root"),
+                "{path}"
+            );
+        }
+        for path in [".github/a.md", "docs/.boards/a.md", ".a.md", "docs/.md"] {
+            assert!(refused(path).contains("starts with ."), "{path}");
+        }
+        for path in ["docs/a.txt", "docs/a.MD", "docs/a.md.txt", "docs/a"] {
+            assert!(refused(path).contains(".md"), "{path}");
+        }
+        assert!(refused("docs\\a.md").contains("\\"));
+        assert!(refused("docs/a\nb.md").contains("control"));
+        // Counted in characters, not bytes: 300 Hangul syllables are 900
+        // bytes and still one path.
+        let at_limit = format!("{}.md", "가".repeat(KEEP_PATH_CHARS - 3));
+        assert_eq!(keep_path_refused(&at_limit), None);
+        let past = format!("{}.md", "가".repeat(KEEP_PATH_CHARS - 2));
+        assert!(refused(&past).contains("longer than 300"));
     }
 }
