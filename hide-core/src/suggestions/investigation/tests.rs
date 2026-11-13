@@ -735,6 +735,7 @@ fn board(id: &str, session: &str, path: &str, updated: u64, blocks: Vec<Body>) -
         created_at_unix_ms: updated,
         updated_at_unix_ms: updated,
         state: BoardState::Open,
+        view: None,
     }
 }
 
