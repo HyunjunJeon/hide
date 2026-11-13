@@ -520,6 +520,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Board displays
 
 A board an agent draws with `hide board new`, or brings back with `hide board open`, is a View like a page: it opens in the active area of the agent's checkout, has a tab, splits, moves and closes like one, and comes back after a restart in the area it was in, at the end of that area.
+A parent agent can open its delegated child's board from its own pane: it opens in the parent's checkout as the parent's View to look at; that View is not put back after a restart, while the View in the board's own checkout is.
 Its tab carries a board mark and the board's title; its tooltip and accessible name say `Board` and the title, and its tab menu has no path to copy and nothing to reveal.
 The View draws the board's head (its title, how long since it changed and its opener's mark) and then each block from the Markdown the core made for it: a section, a table, code, a quote under its `path:start–end` caption, a Mermaid diagram, a callout in a box with its tone, a divider.
 What the agent changes reaches the View in place, with no reload, even after the operator looked; the blocks the change touched are marked for a moment.

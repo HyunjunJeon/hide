@@ -1003,7 +1003,8 @@ fn an_edit_leaves_a_board_the_operator_saw_seen_and_an_open_makes_it_news_again(
     assert!(unseen(&guard, &view), "an open is news again");
     assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
 
-    // Only the session that drew it shows it; another reads it with `show`.
+    // An agent that only shares the checkout reads it with `show` and cannot
+    // show it.
     let stranger = Actor {
         pane_id: "sender".into(),
         name: "sender".into(),
@@ -1430,4 +1431,80 @@ fn the_operators_close_takes_a_board_view_and_leaves_its_board_for_open() {
         (&json!(true), &json!(true))
     );
     assert_eq!(board_views(&guard).len(), 1);
+}
+
+#[test]
+fn a_parent_opens_its_childs_board_as_its_own_and_only_the_parents_row_waits() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), true);
+    let mut guard = runtime.lock().unwrap();
+    keyboard(&mut guard, None);
+    // The ledger's registrations make `sender` the parent of `recipient`,
+    // by the native sessions a board is keyed by.
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    ledger
+        .agents
+        .push(registration("agent-1", "sender", "native-sender", None));
+    ledger.agents.push(registration(
+        "agent-2",
+        "recipient",
+        "native-recipient",
+        Some("agent-1"),
+    ));
+    guard.delivery_ledger = Ok(Arc::new(ledger));
+    ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "new", "title": "Login flow", "no_open": true, "blocks": [{"type": "divider"}]}),
+    );
+    let parent = Actor {
+        pane_id: "sender".into(),
+        name: "sender".into(),
+        kind: "codex".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        session: Some("sender-session".into()),
+    };
+
+    let opened = ok(
+        &mut guard,
+        &parent,
+        json!({"verb": "open", "board": "board-1"}),
+    );
+    assert_eq!(opened["view"]["unseen"], true);
+    let view = view_of(&opened);
+    let display = guard
+        .view_layout_of(&key())
+        .and_then(|layout| layout.display(&view))
+        .unwrap();
+    assert_eq!(
+        display
+            .opener
+            .as_ref()
+            .map(|opener| opener.terminal_id.as_str()),
+        Some("term-sender"),
+        "the parent is its opener"
+    );
+    let lead = row(&guard, "sender");
+    assert_eq!(
+        (lead.group.as_str(), lead.mark),
+        ("needs_you", RowMark::Look)
+    );
+    assert_eq!(
+        (
+            lead.look.as_ref().unwrap().view_id.as_str(),
+            lead.look.as_ref().unwrap().label.as_str()
+        ),
+        (view.as_str(), "Login flow")
+    );
+    let child = row(&guard, "recipient");
+    assert_ne!(child.group, "needs_you");
+    assert!(child.look.is_none());
+    // The child still changes its board, and the parent's View is the one
+    // its answer names.
+    let edited = ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "edit", "board": "board-1", "edits": [{"op": "insert", "block": {"type": "divider"}}]}),
+    );
+    assert_eq!(edited["view"]["id"], view.as_str());
 }

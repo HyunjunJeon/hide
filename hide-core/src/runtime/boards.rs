@@ -283,10 +283,17 @@ impl Runtime {
                 }
                 (answer, true)
             }
-            // Only the drawing session shows its board, as only it changes
-            // it; an ancestor reads it with `show`.
+            // The drawing session shows its board, and so does an ancestor
+            // of it, from its own pane: as with any View a delegated child
+            // opened, the ancestor shows it to the operator by opening it
+            // again, so it lands in the ancestor's checkout as the
+            // ancestor's to look at. An agent that only shares the checkout
+            // reads it with `show`.
             BoardCommand::Open { board } => {
-                let current = self.own_board(&own, &board)?;
+                let current = self.boards.get(&board).ok_or("board_unknown")?;
+                if current.owner != own && !self.session_is_ancestor(&own, &current.owner) {
+                    return Err("board_not_yours".into());
+                }
                 match &current.state {
                     BoardState::Open => {}
                     BoardState::Deleted { .. } => return Err("board_deleted".into()),
@@ -474,6 +481,8 @@ impl Runtime {
         if self.boards.book.is_empty() || self.boards.unreadable.is_some() {
             return;
         }
+        // Only the View in the board's own checkout is kept: one an ancestor
+        // opened in its own checkout is not put back after a restart.
         let mut placed: HashMap<String, ViewHint> = HashMap::new();
         for (key, layout) in self.every_view_layout() {
             for area in layout.areas() {
@@ -481,6 +490,12 @@ impl Runtime {
                     let Some(id) = display.board.as_deref() else {
                         continue;
                     };
+                    let home = self.boards.get(id).is_some_and(|board| {
+                        board.checkout.device_id == key.0 && board.checkout.path == key.1
+                    });
+                    if !home {
+                        continue;
+                    }
                     placed.entry(id.to_owned()).or_insert_with(|| ViewHint {
                         device_id: key.0.clone(),
                         checkout_path: key.1.clone(),
@@ -591,10 +606,22 @@ impl Runtime {
     }
 
     /// The View that shows board `id`, in whichever Workspace it is.
+    /// The View that shows board `id`: the one in the board's own checkout,
+    /// else one an ancestor opened in its own.
     fn board_display(&self, id: &str) -> Option<&Display> {
-        self.every_view_layout()
-            .flat_map(|(_, layout)| layout.displays())
-            .find(|display| display.board.as_deref() == Some(id))
+        let home = self.boards.get(id).map(|board| {
+            (
+                board.checkout.device_id.clone(),
+                board.checkout.path.clone(),
+            )
+        });
+        home.as_ref()
+            .and_then(|home| self.view_layout_of(home))
+            .and_then(|layout| shown_board(layout, id))
+            .or_else(|| {
+                self.every_view_layout()
+                    .find_map(|(_, layout)| shown_board(layout, id))
+            })
     }
 
     /// Board `id`'s View as an answer names it: its id and whether the
@@ -798,6 +825,13 @@ impl Runtime {
         self.keep_boards(gone);
         true
     }
+}
+
+/// The display of `layout` that shows board `id`.
+fn shown_board<'a>(layout: &'a crate::view_layout::Layout, id: &str) -> Option<&'a Display> {
+    layout
+        .displays()
+        .find(|display| display.board.as_deref() == Some(id))
 }
 
 /// A board as `hide board show` prints it: its line and its Markdown, or
