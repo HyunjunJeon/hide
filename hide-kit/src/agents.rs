@@ -227,7 +227,7 @@ pub struct Skill {
 /// routes browser and mission work to their own guides.
 pub const GUIDE_SKILL: Skill = Skill {
     name: "hide",
-    description: "Only for a session in a pane Hide manages, never an ordinary terminal. Work inside Hide, the operator's workspace for coding agents: send and answer letters to other agents, start agents and follow them, run a mission of agents as its Conductor, read and drive a browser display, show the operator a file or a diff, read or add Project Memory, and keep an agent's accounts apart as profiles. Use when a task involves another agent, a mission, a page in Hide's browser, the operator's screen in Hide, Project Memory, or another account of an agent (a shell alias that starts one, or a new account to connect), or when you need to know what Hide offers here.",
+    description: "Only for a session in a pane Hide manages, never an ordinary terminal. Work inside Hide, the operator's workspace for coding agents: send and answer letters to other agents, start agents and follow them, run a mission of agents as its Conductor, read and drive a browser display, show the operator a file, a diff or a board, read or add Project Memory, and keep an agent's accounts apart as profiles. Use when a task involves another agent, a mission, a page in Hide's browser, the operator's screen in Hide, Project Memory, or another account of an agent (a shell alias that starts one, or a new account to connect), or when you need to know what Hide offers here.",
     // The intent table is the session-start note's own (PRD
     // agent-beside-and-session-guide D-14); version 1 had none, and version
     // 2 opened files and pages with the --beside open no longer takes (PRD
@@ -240,11 +240,13 @@ pub const GUIDE_SKILL: Skill = Skill {
     // planning and review requests to missions (PRD hide-task-skill-merge B7, B8).
     // Version 9 proposes a mission before starting complex work.
     // Version 10 adds the row that sends a bug in Hide itself to `hide-issue`.
+    // Version 11 adds the row that draws a board for the operator with
+    // `hide board new` (mission-6, teach).
     body: concat!(
-        "First check that this session runs in a pane Hide manages: Hide's session guidance names this checkout, or `hide workspace info` answers `\"ok\":true`. If neither, stop here; this skill does not apply. Inside Hide, run `hide guide` and follow what it prints. It explains what Hide keeps, how to send and answer letters, how to start and follow agents here or on a connected device, how to show the operator a file or a diff, how to use Project Memory and how to move a shell alias for another account, or connect a new account, as an agent profile, and it sends a browser display to `hide browser help` and a mission of agents to `hide mission help`.\n\n",
+        "First check that this session runs in a pane Hide manages: Hide's session guidance names this checkout, or `hide workspace info` answers `\"ok\":true`. If neither, stop here; this skill does not apply. Inside Hide, run `hide guide` and follow what it prints. It explains what Hide keeps, how to send and answer letters, how to start and follow agents here or on a connected device, how to show the operator a file, a diff or a board, how to use Project Memory and how to move a shell alias for another account, or connect a new account, as an agent profile, and it sends a browser display to `hide browser help` and a mission of agents to `hide mission help`.\n\n",
         hide_agent_hooks::intent_table!()
     ),
-    version: 10,
+    version: 11,
 };
 
 /// Routes work that needs a Conductor to `hide mission help`, leaving
