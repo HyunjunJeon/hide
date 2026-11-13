@@ -10621,19 +10621,19 @@ mod wire_enum_tests {
             assert_wire(&contract, "board_keep_state", &keeps);
             checked.insert("board_keep_state");
             let failures = [
-                KeepFailure::KeepPathRefused,
-                KeepFailure::KeepExists,
-                KeepFailure::KeepBusy,
-                KeepFailure::KeepUnknown,
-                KeepFailure::KeepFailed,
+                KeepFailure::PathRefused,
+                KeepFailure::Exists,
+                KeepFailure::Busy,
+                KeepFailure::Unknown,
+                KeepFailure::Failed,
             ];
             for variant in failures {
                 match variant {
-                    KeepFailure::KeepPathRefused
-                    | KeepFailure::KeepExists
-                    | KeepFailure::KeepBusy
-                    | KeepFailure::KeepUnknown
-                    | KeepFailure::KeepFailed => {}
+                    KeepFailure::PathRefused
+                    | KeepFailure::Exists
+                    | KeepFailure::Busy
+                    | KeepFailure::Unknown
+                    | KeepFailure::Failed => {}
                 }
             }
             assert_wire(&contract, "board_keep_failure", &failures);

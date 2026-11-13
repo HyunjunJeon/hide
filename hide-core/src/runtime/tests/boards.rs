@@ -1945,7 +1945,7 @@ fn keep_refuses_a_path_outside_its_rule_and_a_file_that_already_holds_something(
         (
             "docs/taken.md",
             crate::runtime::boards::KeepState::Failed,
-            Some(crate::runtime::boards::KeepFailure::KeepExists)
+            Some(crate::runtime::boards::KeepFailure::Exists)
         )
     );
 }

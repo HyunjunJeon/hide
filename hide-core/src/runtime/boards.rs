@@ -95,13 +95,17 @@ pub enum KeepState {
 /// save's answer was lost and the file could not be read back, or anything
 /// else the host or the link said.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum KeepFailure {
-    KeepPathRefused,
-    KeepExists,
-    KeepBusy,
-    KeepUnknown,
-    KeepFailed,
+    #[serde(rename = "keep_path_refused")]
+    PathRefused,
+    #[serde(rename = "keep_exists")]
+    Exists,
+    #[serde(rename = "keep_busy")]
+    Busy,
+    #[serde(rename = "keep_unknown")]
+    Unknown,
+    #[serde(rename = "keep_failed")]
+    Failed,
 }
 
 impl BoardKeepView {
@@ -1005,14 +1009,14 @@ impl Runtime {
             return self.keep_failed(
                 id,
                 path,
-                KeepFailure::KeepPathRefused,
+                KeepFailure::PathRefused,
                 format!("{path} {reason}"),
             );
         }
         let relative = match hide_platform::path::RelPath::parse(path) {
             Ok(relative) => relative,
             Err(error) => {
-                return self.keep_failed(id, path, KeepFailure::KeepPathRefused, error.to_string());
+                return self.keep_failed(id, path, KeepFailure::PathRefused, error.to_string());
             }
         };
         let contents = boards::markdown(board);
@@ -1031,7 +1035,7 @@ impl Runtime {
             });
         let (workspace_id, checkout_id, root, channel) = match source {
             Ok(source) => source,
-            Err(reason) => return self.keep_failed(id, path, KeepFailure::KeepFailed, reason),
+            Err(reason) => return self.keep_failed(id, path, KeepFailure::Failed, reason),
         };
         self.boards.keeps.insert(
             id.to_owned(),
@@ -1082,7 +1086,7 @@ impl Runtime {
             return self.keep_failed(
                 &board,
                 path,
-                KeepFailure::KeepFailed,
+                KeepFailure::Failed,
                 format!("The keep could not start: {error}; nothing was written"),
             );
         }
@@ -1152,10 +1156,10 @@ impl Runtime {
                 self.show_kept_file(&request);
                 return true;
             }
-            NewFileOutcome::Exists(reason) => (KeepFailure::KeepExists, reason),
-            NewFileOutcome::Busy(reason) => (KeepFailure::KeepBusy, reason),
-            NewFileOutcome::Unknown(reason) => (KeepFailure::KeepUnknown, reason),
-            NewFileOutcome::Failed(reason) => (KeepFailure::KeepFailed, reason),
+            NewFileOutcome::Exists(reason) => (KeepFailure::Exists, reason),
+            NewFileOutcome::Busy(reason) => (KeepFailure::Busy, reason),
+            NewFileOutcome::Unknown(reason) => (KeepFailure::Unknown, reason),
+            NewFileOutcome::Failed(reason) => (KeepFailure::Failed, reason),
         };
         self.keep_failed(&request.board, &request.path, code, reason)
     }
