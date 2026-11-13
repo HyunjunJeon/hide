@@ -180,10 +180,8 @@ impl Runtime {
         self.refresh_mission_events();
         // A pane's plan follows its session and the plan book.
         self.refresh_plans();
-        // Where each board's View is goes with its record, for a restart;
-        // the boards the front Workspace shows go on the wire when one of
+        // The boards the front Workspace shows go on the wire when one of
         // them, or which they are, changed.
-        self.sync_board_views();
         self.refresh_boards();
         // The 제안 tab follows Hide AI's readiness and GitHub's answer.
         self.refresh_suggestions();

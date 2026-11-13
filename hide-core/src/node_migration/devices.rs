@@ -1506,7 +1506,7 @@ mod tests {
                 "title": "Login flow", "blocks": [], "next_block": 1, "revision": 1,
                 "created_at_unix_ms": 1, "updated_at_unix_ms": 1, "state": "open",
                 "view": {
-                    "device_id": ALIAS, "checkout_path": "/srv/app", "area_id": "a1",
+                    "area_id": "a1",
                     "opener": {"device_id": ALIAS, "terminal_id": "t1", "provider": "claude"},
                     "openers": [{"device_id": ALIAS, "terminal_id": "t1", "provider": "claude"}],
                 },
@@ -1518,12 +1518,10 @@ mod tests {
             (
                 &board["owner"]["device_id"],
                 &board["checkout"]["device_id"],
-                &board["view"]["device_id"],
                 &board["view"]["opener"]["device_id"],
                 &board["view"]["openers"][0]["device_id"],
             ),
             (
-                &json!(MACHINE),
                 &json!(MACHINE),
                 &json!(MACHINE),
                 &json!(MACHINE),

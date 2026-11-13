@@ -1193,7 +1193,8 @@ fn a_restart_puts_each_board_view_back_in_its_area_with_its_unseen_record() {
             .unwrap()
             .id
             .clone();
-        guard.snapshot_delta_payload(0);
+        // No window reads a frame before the restart: the hints are saved
+        // as the layouts commit.
         (seen, waiting, area)
     };
     let hinted = |id: &str, unseen: bool| {
@@ -1616,4 +1617,66 @@ fn a_parent_in_another_checkout_opens_its_childs_board_in_its_own() {
         edited.items[0].blocks[0].markdown,
         "## What changes\n\nSecond text"
     );
+
+    // The Conductor's View is not the board's own checkout's: it is not
+    // kept with the board, and a restart does not put it back.
+    drop(guard);
+    drop(runtime);
+    let stored: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(stored["revision"], 2);
+    assert!(stored.get("view").is_none(), "{stored}");
+    let runtime = on_screen(root.path(), true);
+    let guard = runtime.lock().unwrap();
+    assert!(board_views(&guard).is_empty());
+    assert!(
+        guard
+            .view_layout_of(&home)
+            .is_none_or(|layout| { layout.displays().all(|display| display.board.is_none()) })
+    );
+}
+
+/// A board's View opened, or closed, while no window reads a frame is kept
+/// as it is for a restart: hided reads no snapshot with no client connected,
+/// and its daemon can restart before one connects.
+#[test]
+fn a_view_opened_or_closed_with_no_window_reading_is_kept_for_a_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let (kept, area) = {
+        let runtime = on_screen(root.path(), false);
+        let mut guard = runtime.lock().unwrap();
+        let kept = view_of(&ok(&mut guard, &recipient(), login_flow()));
+        let closed = view_of(&ok(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "new", "title": "Rollout", "blocks": [{"type": "divider"}]}),
+        ));
+        assert!(super::view_areas::act(
+            &mut guard,
+            json!({"action": "close", "display_id": closed}),
+        ));
+        let area = guard
+            .view_layout_of(&key())
+            .and_then(|layout| layout.area_of(&kept))
+            .unwrap()
+            .id
+            .clone();
+        (kept, area)
+    };
+    let runtime = on_screen(root.path(), false);
+    let guard = runtime.lock().unwrap();
+    let layout = guard.view_layout_of(&key()).unwrap();
+    let back: Vec<(String, Option<String>, bool)> = layout
+        .displays()
+        .filter(|display| display.kind == DisplayKind::Board)
+        .map(|display| {
+            (
+                layout.area_of(&display.id).unwrap().id.clone(),
+                display.board.clone(),
+                display.unseen.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(back, [(area, Some("board-1".to_owned()), true)]);
+    assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
+    let _ = kept;
 }

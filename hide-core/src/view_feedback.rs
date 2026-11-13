@@ -303,9 +303,7 @@ impl Anchor {
             (Self::Region { page, rect }, DisplayKind::File) if rect.fraction() => {
                 Ok(Self::Region { page, rect })
             }
-            // Comments on a board are out of its scope (board design,
-            // section 5): no anchor fits one.
-            (_, DisplayKind::Board) => Err("view_comment.invalid_anchor"),
+            // No anchor fits a board: comments on one are out of its scope.
             _ => Err("view_comment.invalid_anchor"),
         }
     }

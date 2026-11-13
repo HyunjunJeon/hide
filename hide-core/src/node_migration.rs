@@ -1148,15 +1148,10 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         Mechanism::Rewritten,
         Moves::Device,
     ),
-    // Where a board's View was (`boards::ViewHint`): its checkout's machine
-    // and each opener's, as a stored View's openers are rewritten; the
-    // terminal, the session and the area are that machine's own and stay.
-    (
-        BOARDS,
-        "/view/device_id",
-        Mechanism::Rewritten,
-        Moves::Device,
-    ),
+    // Where a board's View was (`boards::ViewHint`): each opener's machine,
+    // as a stored View's openers are rewritten; the terminal, the session and
+    // the area are that machine's own and stay, and its checkout is the
+    // board's own.
     (
         BOARDS,
         "/view/opener/device_id",

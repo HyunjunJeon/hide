@@ -1403,6 +1403,9 @@ impl Runtime {
     /// Queues a write of the Workspace view file on its own worker, outside
     /// the runtime mutex; one pending flag coalesces newer state.
     pub(super) fn persist_workspace_views(&mut self) {
+        // Where each board's View is goes with its board's record, as the
+        // layouts commit, whether or not a window reads them.
+        self.sync_board_views();
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };

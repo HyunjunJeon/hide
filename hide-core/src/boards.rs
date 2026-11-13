@@ -220,13 +220,12 @@ pub struct Board {
     pub view: Option<ViewHint>,
 }
 
-/// Where a board's View was and what the operator had of it: the checkout
-/// and area it was in, who opened it and whether it was still to look at.
-/// Written from the View layouts when they change, read once at a start.
+/// Where a board's View was in the board's own checkout and what the
+/// operator had of it: the area it was in, who opened it and whether it was
+/// still to look at. Written from the View layouts each time they are saved,
+/// read once at a start.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ViewHint {
-    pub device_id: String,
-    pub checkout_path: String,
     pub area_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opener: Option<crate::view_feedback::Opener>,
@@ -1236,7 +1235,7 @@ pub fn next_action(code: &str) -> &'static str {
             "The operator's Workspace holds as many Views as it can; the board is kept, so run hide board open <id> once a View is closed"
         }
         "views_unavailable" => {
-            "No Hide window shows this checkout's Views; the board is kept, so run hide board open <id> once one does"
+            "No Hide window has opened this checkout's Views yet; open the Workspace in Hide, then run the command again"
         }
         "agent_pane_required" => "Run hide board from an agent's own Hide pane",
         "caller_context_changed" => {

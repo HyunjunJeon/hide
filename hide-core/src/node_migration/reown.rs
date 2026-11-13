@@ -2003,7 +2003,7 @@ mod tests {
             "title": "Login flow", "blocks": [], "next_block": 1, "revision": 1,
             "created_at_unix_ms": 1, "updated_at_unix_ms": 1, "state": "open",
             "view": {
-                "device_id": device, "checkout_path": path, "area_id": "a1",
+                "area_id": "a1",
                 "opener": {"device_id": device, "terminal_id": "t1", "provider": "claude"},
                 "openers": [{"device_id": device, "terminal_id": "t1", "provider": "claude"}],
             },
@@ -2044,12 +2044,11 @@ mod tests {
         // Where its View was names the machine the same way.
         assert_eq!(
             (
-                &moved["view"]["device_id"],
                 &moved["view"]["opener"]["device_id"],
                 &moved["view"]["openers"][0]["device_id"],
                 &moved["view"]["opener"]["terminal_id"],
             ),
-            (&json!(C), &json!(C), &json!(C), &json!("t1"))
+            (&json!(C), &json!(C), &json!("t1"))
         );
         let own = read(&folder.join("board-2.json"));
         assert_eq!(

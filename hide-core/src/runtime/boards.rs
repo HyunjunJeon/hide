@@ -52,6 +52,9 @@ pub(crate) struct BoardRuntime {
     /// The View layouts' generation the board records' View hints were last
     /// read from.
     hinted: Option<u64>,
+    /// Set while the start puts the boards' Views back, so their hints are
+    /// read once, after the last.
+    restoring: bool,
 }
 
 /// `rest.boards`: the boards a display of the front Workspace's View layout
@@ -59,7 +62,9 @@ pub(crate) struct BoardRuntime {
 /// core holds (board design, section 3, The wire).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct BoardsSnapshot {
-    pub items: Vec<BoardView>,
+    /// Each shared with the frame before when its board did not move, so a
+    /// change to one board builds that board's item alone.
+    pub items: Vec<std::sync::Arc<BoardView>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -454,10 +459,22 @@ impl Runtime {
         if self.boards.shown.as_ref() == Some(&shown) {
             return;
         }
+        // A board whose revision and state did not move keeps the item the
+        // last frame built; only a board that moved is drawn again.
         let items = shown
             .iter()
-            .filter_map(|(id, _, _)| self.boards.get(id))
-            .map(BoardView::of)
+            .filter_map(|(id, revision, state)| {
+                let kept = self.snapshot.boards.items.iter().find(|item| {
+                    item.id == *id && item.revision == *revision && item.state == *state
+                });
+                match kept {
+                    Some(item) => Some(std::sync::Arc::clone(item)),
+                    None => self
+                        .boards
+                        .get(id)
+                        .map(|board| std::sync::Arc::new(BoardView::of(board))),
+                }
+            })
             .collect();
         self.boards.shown = Some(shown);
         self.boards.generation += 1;
@@ -466,11 +483,15 @@ impl Runtime {
     }
 
     /// Keeps each open board's View hint as its View is now, read from the
-    /// layouts when they moved: a View opened, seen, moved or closed by any
+    /// layouts each time they are saved (`persist_workspace_views`), whether
+    /// or not a window reads them: a View opened, seen, moved or closed by any
     /// path (an agent, the operator, the cap, a closed pane) is one change of
-    /// the layouts' generation. A hint that moved is saved with its board;
-    /// it moves no revision and publishes nothing.
+    /// the layouts' generation. A hint that moved is handed to the board
+    /// folder's save thread; it moves no revision and publishes nothing.
     pub(super) fn sync_board_views(&mut self) {
+        if self.boards.restoring {
+            return;
+        }
         let Some(generation) = self.workspace_views.as_ref().map(|store| store.generation) else {
             return;
         };
@@ -497,8 +518,6 @@ impl Runtime {
                         continue;
                     }
                     placed.entry(id.to_owned()).or_insert_with(|| ViewHint {
-                        device_id: key.0.clone(),
-                        checkout_path: key.1.clone(),
                         area_id: area.id.clone(),
                         opener: display.opener.clone(),
                         openers: display.openers.clone(),
@@ -538,15 +557,27 @@ impl Runtime {
     /// A gone area gives way to the checkout's active one; a full Workspace
     /// keeps the board closed, for `hide board open`.
     pub(super) fn restore_board_views(&mut self) {
-        let hinted: Vec<(String, String, ViewHint)> = self
+        let hinted: Vec<(String, String, (String, String), ViewHint)> = self
             .boards
             .book
             .values()
             .filter(|board| board.state == BoardState::Open)
-            .filter_map(|board| Some((board.id.clone(), board.title.clone(), board.view.clone()?)))
+            .filter_map(|board| {
+                Some((
+                    board.id.clone(),
+                    board.title.clone(),
+                    (
+                        board.checkout.device_id.clone(),
+                        board.checkout.path.clone(),
+                    ),
+                    board.view.clone()?,
+                ))
+            })
             .collect();
-        for (id, title, hint) in hinted {
-            let key = (hint.device_id.clone(), hint.checkout_path.clone());
+        // Each placement saves the layouts; the hints are read again once
+        // every board is back, not between two of them.
+        self.boards.restoring = true;
+        for (id, title, key, hint) in hinted {
             let placed = self.change_view_layout(&key, |layout, _| {
                 if layout
                     .displays()
@@ -572,6 +603,8 @@ impl Runtime {
                 }));
             }
         }
+        self.boards.restoring = false;
+        self.sync_board_views();
     }
 
     /// Opens board `id`'s View from the caller's pane through the View
@@ -605,7 +638,6 @@ impl Runtime {
         Ok(json!({"id": opened.view_id, "open": true, "unseen": unseen}))
     }
 
-    /// The View that shows board `id`, in whichever Workspace it is.
     /// The View that shows board `id`: the one in the board's own checkout,
     /// else one an ancestor opened in its own.
     fn board_display(&self, id: &str) -> Option<&Display> {
@@ -650,7 +682,7 @@ impl Runtime {
             .map(|(key, _)| key)
             .collect();
         for key in keys {
-            let _ = self.change_view_layout(&key, |layout, _| {
+            let retitled = self.change_view_layout(&key, |layout, _| {
                 let ids: Vec<String> = layout
                     .displays()
                     .filter(|display| display.board.as_deref() == Some(id))
@@ -663,6 +695,12 @@ impl Runtime {
                 }
                 Ok(((), !ids.is_empty()))
             });
+            if let Err(error) = retitled {
+                crate::diagnostic!(json!({
+                    "component": "boards", "kind": "boards.view_retitle_failed",
+                    "board": id, "device": key.0, "error": error.kind(),
+                }));
+            }
         }
         self.refresh_unseen_rows();
     }
