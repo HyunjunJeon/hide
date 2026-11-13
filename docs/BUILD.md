@@ -350,7 +350,7 @@ The packager verifies foreign bytes without executing them, by their executable 
 
 `.github/workflows/device-helpers.yml` is the reusable producer of the Linux kits.
 Its required string inputs are `source-sha` (full public source commit), `version` (the app version, optionally prefixed with `v`) and `build-order` (decimal order, including `0` for a fixture).
-It explicitly checks out the public repository.
+It checks out the public repository by name, as `package.yml` does, so a caller in another repository of the organization builds public source; a fork's own run checks out the fork, which holds its pull request's commit (`HIDE_SOURCE_REPOSITORY`).
 The Linux runners build natively on `ubuntu-24.04` and `ubuntu-24.04-arm` using the existing package recipe after the web build.
 No new cross-compilation toolchain is needed.
 Targeted output stays in this worktree's `target/<triple>/release`; host release binaries stay at `target/release`.

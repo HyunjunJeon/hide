@@ -106,6 +106,15 @@ on:
       HIDE_ISSUES_APP_KEY:
         required: false
 
+# The repository that holds the commit to check out. Each checkout names it
+# because a caller in another repository of the with-hide organization (the
+# private publisher) sees its own name in `github.repository`; every run there
+# and in with-hide/hide keeps checking out with-hide/hide. A fork's own run
+# checks out the fork, which holds its pull request's merge commit, as the
+# upstream repository does not.
+env:
+  HIDE_SOURCE_REPOSITORY: ${{ github.repository_owner == 'with-hide' && 'with-hide/hide' || github.repository }}
+
 permissions:
   contents: read
 
@@ -119,7 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
@@ -156,7 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
@@ -211,7 +220,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       # Saved by a run on main (the nightly, a candidate dispatched from main);
       # a pull request and a release tag read it and never write it.
@@ -279,7 +288,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       # Saved by a run on main (the nightly, a candidate dispatched from main);
       # a pull request and a release tag read it and never write it.
@@ -494,7 +503,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       # The app is assembled from `compile (windows)`'s binaries, so this job
       # builds no Rust and restores no cache.
@@ -658,7 +667,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       # Saved by a run on main (the nightly, a candidate dispatched from main);
       # a pull request and a release tag read it and never write it.
@@ -721,7 +730,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: with-hide/hide
+          repository: ${{ env.HIDE_SOURCE_REPOSITORY }}
           ref: ${{ inputs.source-sha || github.sha }}
       - uses: pnpm/action-setup@v6
         with:
