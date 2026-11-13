@@ -46,7 +46,7 @@ pub const HOOK_ENTRY_VERSION: u32 = 13;
 #[macro_export]
 macro_rules! intent_table {
     () => {
-        "Inside Hide, turn what the operator asks for into its command:\n| The operator asks | Run |\n| --- | --- |\n| show the operator a file, a diff or a web page | `hide file open <path>`, `hide diff open <path>`, `hide browser open <url-or-path>`: it opens as a tab of the active View area and waits in the operator's Needs You as To look at until they look at it |\n| check a page for yourself (your own browser QA) | your own browser tool, such as `aside`, not `hide browser open`: a page you open in Hide waits for the operator |\n| collect what a delegated child opened | `hide view list` shows what the operator has not seen and who opened it; read it with `hide view status <view-id>` or `hide browser snapshot <display>`, and to show it, open it again from your own pane |\n| start an agent beside you | `hide agent spawn --beside …` (your own checkout only; it is the operator's to watch, so it takes no `--parent`) |\n| hand work to an agent and collect its result | `hide agent spawn --parent here …` |\n| complex work: planning or review first, multiple PRs or parallel work, another agent reviewing, or work likely to fill the conversation | first ask in one line: Shall I run this as a mission, or do it directly? Follow the operator's answer; if they already requested a mission or invoked `/hide-mission`, run `hide mission help` and follow it without asking again. With none of these signals, work directly without asking |\n| Hide itself misbehaves: a crash, a command that fails or answers wrongly for no reason of yours, a pane or screen that breaks | `hide issue help`, which the `hide-issue` skill points at: collect the exact error, versions and steps into the bug template, show the operator, and file it in with-hide/hide after their yes |\n| start independent work the operator will handle | `hide agent spawn …` without --parent |\nWithout --beside, `hide agent spawn` opens the agent in a tab of its own. Never start an agent with `hide pane open` or by typing its program into a pane: that agent has no parent, letters or watch. Never show the operator a result with the system opener (`open`, `xdg-open`, `start`, `Start-Process`, `Invoke-Item`): it lands in an app outside Hide with no trace of who opened it, and Hide refuses the call. Use `hide browser open` for a page or a URL and `hide file open` for anything else, for a file outside the checkout too."
+        "Inside Hide, turn what the operator asks for into its command:\n| The operator asks | Run |\n| --- | --- |\n| show the operator a file, a diff or a web page | `hide file open <path>`, `hide diff open <path>`, `hide browser open <url-or-path>`: it opens as a tab of the active View area and waits in the operator's Needs You as To look at until they look at it |\n| tell the operator something with parts (an explanation, a diagram, a table, quoted code, a decision) rather than a long chat answer | `hide board new --title <t> --file <board.json>` (`hide board help` lists the blocks): it opens as a board View that waits in the operator's Needs You as To look at, and `hide board edit <board>` changes what they see in place, even after they looked |\n| check a page for yourself (your own browser QA) | your own browser tool, such as `aside`, not `hide browser open`: a page you open in Hide waits for the operator |\n| collect what a delegated child opened | `hide view list` shows what the operator has not seen and who opened it; read it with `hide view status <view-id>` or `hide browser snapshot <display>`, and to show it, open it again from your own pane (a board by the id in the child's report: `hide board open <id>`) |\n| start an agent beside you | `hide agent spawn --beside …` (your own checkout only; it is the operator's to watch, so it takes no `--parent`) |\n| hand work to an agent and collect its result | `hide agent spawn --parent here …` |\n| complex work: planning or review first, multiple PRs or parallel work, another agent reviewing, or work likely to fill the conversation | first ask in one line: Shall I run this as a mission, or do it directly? Follow the operator's answer; if they already requested a mission or invoked `/hide-mission`, run `hide mission help` and follow it without asking again. With none of these signals, work directly without asking |\n| Hide itself misbehaves: a crash, a command that fails or answers wrongly for no reason of yours, a pane or screen that breaks | `hide issue help`, which the `hide-issue` skill points at: collect the exact error, versions and steps into the bug template, show the operator, and file it in with-hide/hide after their yes |\n| start independent work the operator will handle | `hide agent spawn …` without --parent |\nWithout --beside, `hide agent spawn` opens the agent in a tab of its own. Never start an agent with `hide pane open` or by typing its program into a pane: that agent has no parent, letters or watch. Never show the operator a result with the system opener (`open`, `xdg-open`, `start`, `Start-Process`, `Invoke-Item`): it lands in an app outside Hide with no trace of who opened it, and Hide refuses the call. Use `hide browser open` for a page or a URL and `hide file open` for anything else, for a file outside the checkout too."
     };
 }
 
@@ -611,6 +611,36 @@ mod tests {
             ] {
                 assert_eq!(hook_stdout(runtime, event), None);
             }
+        }
+    }
+
+    /// Every runtime's session start teaches `hide board` in one row of the
+    /// table, beside the file open it resembles, and a parent learns to show
+    /// a child's board by opening it from its own pane (mission-6, teach).
+    #[test]
+    fn every_runtimes_session_start_teaches_the_board_in_one_row() {
+        let row = "| tell the operator something with parts (an explanation, a diagram, a table, quoted code, a decision) rather than a long chat answer | `hide board new --title <t> --file <board.json>` (`hide board help` lists the blocks): it opens as a board View that waits in the operator's Needs You as To look at, and `hide board edit <board>` changes what they see in place, even after they looked |\n";
+        let table = intent_table!();
+        assert_eq!(table.matches(row).count(), 1);
+        assert_eq!(table.matches("`hide board new").count(), 1);
+        // It follows the file open row: both show the operator something.
+        assert!(table.contains(&format!("until they look at it |\n{row}")));
+        assert!(table.contains(
+            "open it again from your own pane (a board by the id in the child's report: `hide board open <id>`)"
+        ));
+        // The board's JSON goes in a file: `--json` can outgrow a command
+        // line and PowerShell changes its quotes.
+        assert!(!table.contains("--json"));
+        for runtime in AgentRuntime::ALL {
+            let output: serde_json::Value = serde_json::from_str(
+                &hook_stdout(runtime, HookEvent::SessionStart).expect("SessionStart output"),
+            )
+            .expect("valid JSON output");
+            let context = output["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .expect("additional context");
+            assert!(context.contains(row), "{runtime:?}");
+            assert!(context.contains("`hide board open <id>`"), "{runtime:?}");
         }
     }
 

@@ -499,6 +499,9 @@ fn each_agent_reads_context_in_the_field_its_documentation_names() {
     assert!(context.contains("`hide browser help`"));
     assert!(context.ends_with("workspace guidance"));
     assert!(session_context(None).contains("`hide browser help`"));
+    // The guidance agents and the plugin runtimes (Pi, omp, OpenCode) read
+    // the same table, board row included (mission-6, teach).
+    assert!(session_context(None).contains("`hide board new --title <t> --file <board.json>`"));
 
     let stdout = |agent| super::stdout(agent, &context).unwrap();
     let gemini: Value = serde_json::from_str(&stdout(GuidanceAgent::Gemini)).unwrap();

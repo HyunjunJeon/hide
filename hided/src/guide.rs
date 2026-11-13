@@ -85,6 +85,34 @@ mod tests {
     }
 
     #[test]
+    fn the_guide_spells_hide_board_as_the_command_parses_it() {
+        assert!(TEXT.contains(crate::board_cli::USAGE));
+    }
+
+    /// `hide guide` prints a Boards section beside the session-start row:
+    /// when to draw one, that an edit reaches a board already looked at, and
+    /// how a parent shows its child's board (mission-6, teach).
+    #[test]
+    fn the_guide_prints_the_boards_section() {
+        let guide = text();
+        assert_eq!(guide.matches("\n## Boards\n").count(), 1);
+        let boards = &guide[guide.find("\n## Boards\n").unwrap()..];
+        let boards = &boards[..boards[1..].find("\n## ").unwrap() + 1];
+        for rule in [
+            "draw a board rather than a long answer in your pane",
+            "`hide board help` lists the blocks",
+            "pass `--file`",
+            "waits in the operator's Needs You as To look at",
+            "even after they looked",
+            "A delegated child's board does not wait for the operator",
+            "run `hide board open <id>` from your own pane",
+        ] {
+            assert!(boards.contains(rule), "{rule}");
+        }
+        assert!(guide.contains("`hide board new --title <t> --file <board.json>`"));
+    }
+
+    #[test]
     fn the_guide_spells_hide_workspace_remove_as_the_command_parses_it() {
         assert!(TEXT.contains(crate::worktree_cli::USAGE));
     }

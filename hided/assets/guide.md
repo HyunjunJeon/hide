@@ -154,6 +154,25 @@ hide view move <view-id> --area <area-id> --index <n>
 - What a delegated child opens does not wait for the operator: it marks your row to read, and the child's report letter lists it. You answer for it: read it with `view status <view-id>` or `browser snapshot|screenshot|eval|console|network <display>` from your own pane, which clears that mark, and when the operator should see it, open it again from your own pane so it waits for them as yours.
 - `hide <path>` (or `hide .`) is the operator's own command: it adds a folder of your machine as a project when it is not one yet, then brings Hide's window to it, moving the operator's screen. Run it only when the operator asks you to open a folder in Hide, and say what came forward.
 
+## Boards
+
+```
+hide board help
+hide board new --title <title> (--file <board.json> | --json <blocks>) [--no-open]
+hide board set <board> (--file <board.json> | --json <blocks>) [--title <title>] [--revision <n>]
+hide board edit <board> (--file <edits.json> | --json <edits>) [--revision <n>]
+hide board open <board>
+hide board show [<board>] [--json]
+hide board list
+hide board delete <board>
+```
+
+- When what you have to tell the operator has parts (an explanation, a diagram, a table, code quoted from the checkout, a decision and its risks), draw a board rather than a long answer in your pane; `hide board help` lists the blocks, the limits and an example file. Write the blocks to a file and pass `--file`: `--json` can outgrow a command line, and PowerShell changes its quotes.
+- `new` opens the board as a board View, as `file open` opens a file, and it waits in the operator's Needs You as To look at until they look. Hide keeps it for your session, through a restart.
+- `edit` changes blocks and `set` replaces them all; what the operator sees changes in place, even after they looked, and asks for no second look: the answer's `unseen` says whether they have looked. `open <board>` brings it forward, or back once closed, and asks them to look again.
+- A delegated child's board does not wait for the operator: it marks your row to read, and the child's report gives its id. Read it with `hide board show <id>`, and when the operator should see it, run `hide board open <id>` from your own pane, so it waits for them as yours.
+- `delete <board>` deletes one of your own boards for good.
+
 ## Project Memory
 
 ```
