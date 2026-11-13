@@ -709,6 +709,19 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
    * (S7 B20). A display is asked for from where it stands in this frame, so
    * a move or split of the active view waits for the frame that lands it.
    */
+  /** Whether the Workspace screen shows the checkout at `checkoutPath` on `deviceId` in front now, so its documents can come forward in place. */
+  const checkoutInFront = (deviceId: string, checkoutPath: string) => {
+    const front = frontViewWorkspace();
+    const state = ui();
+    return !state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === deviceId && front.path === checkoutPath;
+  };
+
+  /** The catalog's project and checkout at `checkoutPath` on `deviceId`, either missing once it is no longer open. */
+  const catalogCheckoutAt = (deviceId: string, checkoutPath: string) => {
+    const project = catalogWorkspaces(rest()).find((row) => row.device_id === deviceId && row.checkouts.some((checkout) => checkout.path === checkoutPath));
+    return { project, checkout: project?.checkouts.find((row) => row.path === checkoutPath) };
+  };
+
   const followFocus = (frame: ViewFrame, target: { displayId: string } | { areaId: string }) => {
     const workspace = workspaceKey(frame.workspace);
     if ("areaId" in target) return ui().setViewFocusRequest({ workspace, areaId: target.areaId });
@@ -3406,12 +3419,9 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
      * either way that checkout's documents come in front.
      */
     openRecordBoard(board: import("./snapshot").RecordBoard) {
-      const project = catalogWorkspaces(rest()).find((row) => row.device_id === board.device_id && row.checkouts.some((checkout) => checkout.path === board.checkout_path));
-      const checkout = project?.checkouts.find((row) => row.path === board.checkout_path);
+      const { project, checkout } = catalogCheckoutAt(board.device_id, board.checkout_path);
       if (!project || !checkout) return diagnostic(`record board: ${board.checkout_path} is no longer open on ${board.device_id}`);
-      const front = frontViewWorkspace();
-      const state = ui();
-      const inFront = !state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === board.device_id && front.path === board.checkout_path;
+      const inFront = checkoutInFront(board.device_id, board.checkout_path);
       const node = localDeviceId(rest());
       const device = deviceField(board.device_id, node);
       if (board.state === "kept" && board.kept_path) {
@@ -3461,15 +3471,12 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
      * Workspace in front first, so there only the Workspace comes forward.
      */
     openViewAt(deviceId: string, checkoutPath: string, displayId: string) {
-      const front = frontViewWorkspace();
-      const state = ui();
-      if (!state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === deviceId && front.path === checkoutPath) {
+      if (checkoutInFront(deviceId, checkoutPath)) {
         showDocuments();
         focusView(displayId, true);
         return;
       }
-      const project = catalogWorkspaces(rest()).find((row) => row.device_id === deviceId && row.checkouts.some((checkout) => checkout.path === checkoutPath));
-      const checkout = project?.checkouts.find((row) => row.path === checkoutPath);
+      const { project, checkout } = catalogCheckoutAt(deviceId, checkoutPath);
       if (!project || !checkout) return diagnostic(`record view: ${checkoutPath} is no longer open on ${deviceId}`);
       const node = localDeviceId(rest());
       if (deviceId !== node) return this.openWorkspace(deviceId, project.id, checkout.id);

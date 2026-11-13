@@ -911,6 +911,8 @@ impl Runtime {
                 }
                 None => {
                     self.boards.book.remove(id);
+                    // A failed keep's line goes with its board.
+                    self.boards.keeps.remove(id);
                 }
             }
         }

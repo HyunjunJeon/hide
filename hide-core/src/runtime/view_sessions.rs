@@ -579,15 +579,7 @@ impl Runtime {
         record: &crate::links::ledger::SessionRecord,
     ) -> Vec<crate::model::RecordBoardSnapshot> {
         use crate::boards::BoardState;
-        use crate::links::ledger::{SessionIdentity, SessionRecord};
-        fn tree<'a>(record: &'a SessionRecord, into: &mut Vec<&'a SessionIdentity>) {
-            into.push(&record.session);
-            for child in &record.children {
-                tree(child, into);
-            }
-        }
-        let mut sessions = Vec::new();
-        tree(record, &mut sessions);
+        let sessions = record_sessions(record);
         let mut found: Vec<crate::model::RecordBoardSnapshot> = self
             .boards
             .boards()
@@ -622,16 +614,8 @@ impl Runtime {
         &self,
         record: &crate::links::ledger::SessionRecord,
     ) -> (Vec<crate::model::RecordViewSnapshot>, usize) {
-        use crate::links::ledger::{SessionIdentity, SessionRecord};
-        fn tree<'a>(record: &'a SessionRecord, into: &mut Vec<&'a SessionIdentity>) {
-            into.push(&record.session);
-            for child in &record.children {
-                tree(child, into);
-            }
-        }
-        let mut sessions = Vec::new();
-        tree(record, &mut sessions);
-        let sessions: Vec<(&SessionIdentity, Option<String>)> = sessions
+        use crate::links::ledger::SessionIdentity;
+        let sessions: Vec<(&SessionIdentity, Option<String>)> = record_sessions(record)
             .into_iter()
             .map(|session| {
                 (
@@ -797,6 +781,17 @@ struct ViewTile {
     label: String,
     document_kind: Option<crate::model::DocumentKind>,
     lines: Vec<String>,
+}
+
+/// The sessions of a record's tree: its own, then each descendant's.
+fn record_sessions(
+    record: &crate::links::ledger::SessionRecord,
+) -> Vec<&crate::links::ledger::SessionIdentity> {
+    let mut sessions = vec![&record.session];
+    for child in &record.children {
+        sessions.extend(record_sessions(child));
+    }
+    sessions
 }
 
 /// Whether a View is a 결과물, something made for a person to look at, by
