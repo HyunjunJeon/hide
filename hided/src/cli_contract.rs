@@ -1513,6 +1513,7 @@ pub const COMMANDS: &[Spec] = &[
             required("--title", Text),
             cleared("--file", Text, &["--json"]),
             cleared("--json", Json, &["--file"]),
+            switch("--no-open"),
         ],
         rest: None,
         answers: &["board"],
@@ -1589,6 +1590,23 @@ pub const COMMANDS: &[Spec] = &[
         rest: None,
         answers: &["board_shown", "board", "board_list"],
         refusals: &["board_unknown", "board_not_yours", "board_deleted"],
+    },
+    Spec {
+        words: &["board", "open"],
+        arguments: &[BOARD],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[],
+        rest: None,
+        answers: &["board_opened"],
+        refusals: &[
+            "board_unknown",
+            "board_not_yours",
+            "board_deleted",
+            "board_kept",
+            "view_limit",
+            "views_unavailable",
+        ],
     },
     spec(&["board", "list"], &[], &[], &["board_list"]),
     Spec {
@@ -1802,6 +1820,9 @@ fn answers() -> Value {
     // its record; `show <board>` adds its Markdown, and `list` and a bare
     // `show` answer every board of the caller's session.
     map.insert("board".into(), shape(&["board"]));
+    // An open answers the board's line and its View's: its id and whether
+    // the operator has still to look at it.
+    map.insert("board_opened".into(), shape(&["board", "view"]));
     map.insert("board_shown".into(), shape(&["board", "markdown"]));
     map.insert("board_list".into(), shape(&["boards"]));
     map.insert(

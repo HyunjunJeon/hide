@@ -342,9 +342,9 @@ class Scenario:
 
     def boards(self):
         """A board drawn by an agent on the core and one on the device: each
-        board's file names the machine and the session that drew it and the
-        checkout it was drawn in, which a device's new id and a core move
-        rekey. A release before `hide board` refuses the command, and the
+        board's file names the machine and the session that drew it, the
+        checkout it was drawn in and, once its View opened, that View's
+        checkout and openers, which a device's new id and a core move rekey. A release before `hide board` refuses the command, and the
         report records the step as not done."""
         blocks = [{"type": "section", "title": "Release state", "text": "Drawn by the release-state scenario."}]
         drawn = {}

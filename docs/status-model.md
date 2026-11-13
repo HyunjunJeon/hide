@@ -257,7 +257,8 @@ Regression owners: `a_descendants_demand_or_completion_turns_every_ancestor_unre
 
 ## A View to look at
 
-An agent that opens a View with `hide file open`, `hide diff open` or `hide browser open` opens it to show the operator, so the View is unseen until the operator looks at it (PRD unseen-agent-views D-05, D-06).
+An agent that opens a View with `hide file open`, `hide diff open`, `hide browser open`, `hide board new` or `hide board open` opens it to show the operator, so the View is unseen until the operator looks at it (PRD unseen-agent-views D-05, D-06).
+A board's later `hide board edit` or `hide board set` changes what its View shows and never makes it news: a board the operator looked at stays seen, and only an `open` makes it To look at again; the board's row line names its title (`볼 것 · <title>`), and a title `set` changes is the row's at once.
 A View the operator opened, from the Explorer, ⌘P, a new tab's address field or a path or address clicked in a terminal, is never unseen, and an agent's `hide browser snapshot`, `click` or other command on a page leaves the View as it was.
 A new target a page opens on its own (a link to a new tab) is the page's, not a new open.
 The record is the View's own (`Display::unseen` in `view_layout.rs`, `Unseen` in `view_feedback.rs`): when the open happened, as a generation that moves on each open, and whether an ancestor has read it; it is stored with the checkout's View layout, so it survives a restart, and it goes with the View, so there are never more records than open Views (D-09, D-12).
@@ -283,9 +284,10 @@ A click on the desktop notification opens the row as pressing it does, its pane 
 A delegated child's unseen View never puts a row in Needs You (D-10): the child stays in Working or Seen, and the View is a descendant signal (`view:<id>@<generation>`) that turns every ancestor unread, as A descendant's change turns its ancestors unread above.
 An ancestor that reads the View through its own pane, with `hide view status <view-id>` or a `hide browser snapshot`, `screenshot`, `eval`, `console` or `network` on it, turns that signal off for every ancestor, and the View stays unseen in the child's `N views` (D-22, D-23); the child itself, an unrelated agent, the operator's shell and `hide view list` do not.
 An ancestor that opens the View again from its own pane becomes its opener, so its own row has it to look at (D-21, B24).
-`hide view list` says which Views the operator has not looked at (`unseen`), and a report letter lists the Views its sender opened and whether each was seen.
+`hide view list` says which Views the operator has not looked at (`unseen`), and a report letter lists the Views its sender opened and whether each was seen; a board is listed as `board <id> · <title>`, which an ancestor reads with `hide board show <id>` in any checkout and shows the operator with `hide board open <id>` from its own pane, which makes it the ancestor's View to look at.
+After a restart a board's View comes back with its unseen record from its board's record, where it is kept instead of `workspace-views.json` ([ARCHITECTURE.md: The board View](ARCHITECTURE.md#the-board-view)).
 
-Regression owners: `hide-core/src/runtime/tests/unseen_views.rs`, `a_seen_record_that_does_not_read_is_unseen_and_a_missing_one_is_seen` in `view_layout.rs`, the look line in `web/src/agentRow.test.ts`, and `a_view_to_look_at_is_one_notice_per_news_and_yields_to_the_rows_own_ask` in `hided/src/mobile/push.rs`.
+Regression owners: `hide-core/src/runtime/tests/unseen_views.rs`, the board View tests in `hide-core/src/runtime/tests/boards.rs`, `a_seen_record_that_does_not_read_is_unseen_and_a_missing_one_is_seen` in `view_layout.rs`, the look line in `web/src/agentRow.test.ts`, and `a_view_to_look_at_is_one_notice_per_news_and_yields_to_the_rows_own_ask` in `hided/src/mobile/push.rs`.
 
 ## A quiet row that waits
 

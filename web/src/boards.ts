@@ -43,6 +43,22 @@ export type BoardView = {
 /** `rest.boards`: the boards a display of the front Workspace shows. */
 export type BoardsRest = { items: BoardView[] };
 
+/** The board a display names, as `rest.boards` carries it; null until the store has it. */
+export function boardOf(boards: BoardsRest | undefined, id: string | undefined): BoardView | null {
+  if (!id) return null;
+  return boards?.items.find((board) => board.id === id) ?? null;
+}
+
+/**
+ * A board View's state from its display's (`display_state`: `open`, or
+ * `unavailable` once the board was deleted) and the store: open only once
+ * the store has the board too, so a first frame never draws an empty board.
+ */
+export function boardDisplayState(state: "open" | "opening" | "waiting" | "unavailable", board: BoardView | null): "open" | "waiting" | "unavailable" {
+  if (state === "unavailable") return "unavailable";
+  return state === "open" && board ? "open" : "waiting";
+}
+
 /** The board and revision a View last drew: the web's own memory, never the core's (section 3, The edit). */
 export type DrawnBoard = { id: string; revision: number };
 

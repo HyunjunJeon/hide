@@ -1,12 +1,14 @@
 import { ExternalDisplay } from "./ExternalDisplay";
 import { useExternalGrant } from "./externalFiles";
 import { ProjectLanePin } from "./ProjectLanePin";
-import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { GlobeIcon, LayoutDashboardIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
+import { BoardView } from "./BoardView";
+import { boardDisplayState, boardOf } from "./boards";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
 import { Badge } from "./components/ui/badge";
@@ -14,7 +16,8 @@ import { FileMark } from "./components/file-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
-import { CommentCount, FeedbackRow } from "./ViewComments";
+import { CommentCount, FeedbackRow, OpenerMark } from "./ViewComments";
+import { RenderBoundary } from "./RenderBoundary";
 import { DisplayEditor, DocumentKeeper, PendingDocumentHeader } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -169,6 +172,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
   const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.kind === "external") return <ExternalDisplay display={display} workspace={workspace} actions={actions} />;
+  if (display.kind === "board") return <BoardDisplay display={display} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} workspace={workspace} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
@@ -189,6 +193,27 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
     {state}
   </>;
 
+}
+
+/**
+ * A board's View: its board from `rest.boards`, read from the store on every
+ * frame, so an agent's edit is drawn in place whether or not the operator has
+ * looked; the display holds only the board's id (board design, section 3).
+ */
+function BoardDisplay({ display, actions }: { display: ViewDisplaySnapshot; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const board = useShellStore((s) => boardOf(s.rest?.boards, display.board));
+  return (
+    <RenderBoundary region="board" fallback={<AreaEmpty state="board-failed" text={t("shell.renderFailed")} />}>
+      <BoardView
+        board={board}
+        state={boardDisplayState(display.state, board)}
+        label={display.label}
+        opener={display.opener ? <OpenerMark opener={display.opener} actions={actions} /> : null}
+        onCloseView={() => actions.closeView(display.id)}
+      />
+    </RenderBoundary>
+  );
 }
 
 /** One display's tab: its kind's mark, italic while a preview, its save marks, and its whole identity (B2, B21). */
@@ -306,6 +331,7 @@ function ExternalBadge({ path }: { path: string | null }) {
 /** A file's type mark or the diff's comparison mark; never colour alone (D-15). */
 export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
   if (display.kind === "browser") return <GlobeIcon aria-hidden="true" data-view-mark="browser" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
+  if (display.kind === "board") return <LayoutDashboardIcon aria-hidden="true" data-view-mark="board" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
   if (display.kind === "diff") {
     return (
       <span aria-hidden="true" data-view-mark="diff" className="shrink-0 font-mono text-warning">

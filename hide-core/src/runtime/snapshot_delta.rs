@@ -180,6 +180,9 @@ impl Runtime {
         self.refresh_mission_events();
         // A pane's plan follows its session and the plan book.
         self.refresh_plans();
+        // The boards the front Workspace shows go on the wire when one of
+        // them, or which they are, changed.
+        self.refresh_boards();
         // The 제안 tab follows Hide AI's readiness and GitHub's answer.
         self.refresh_suggestions();
         // Every published row names its machine and its own pane id.

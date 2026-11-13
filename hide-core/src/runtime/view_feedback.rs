@@ -353,6 +353,7 @@ impl Runtime {
                 | Action::OpenDiff { .. }
                 | Action::OpenBrowser { .. }
                 | Action::OpenExternal { .. }
+                | Action::OpenBoard { .. }
         ) {
             return;
         }

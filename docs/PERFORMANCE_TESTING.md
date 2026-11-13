@@ -286,6 +286,12 @@ Terminal input and a document's keystrokes are no selection and skip the compari
 A reconnect that keeps a device in front is one selection that reads nothing, though its comparison still runs.
 It does no I/O, subprocess or serialization; regression owners are the `read_on_look.rs` tests, and no latency or CPU parity was measured.
 
+A board's View adds no thread, timer, watcher or queue ([ARCHITECTURE.md: The board View](ARCHITECTURE.md#the-board-view)).
+Each snapshot read walks the front Workspace's View layout once (at most 32 displays) and looks each board display's board up in the book, a map of at most 256; the `boards` field is made again only when which boards it shows, or one's revision or state, moved, and carries its own generation, so a frame with nothing new copies and compares no board.
+When it moves it draws again only the boards whose revision or state moved (their blocks and Markdown, at most 64 KiB each), shares every other board's item with the frame before, and hands the owned field to serialization off the lock; that happens once per accepted `hide board` command that changed a shown board, never per keystroke or per frame.
+The View hints are read from the layouts each time the layouts are saved, once per generation (one walk of every Workspace's displays), and save only the boards whose hint changed, through the board folder's one save thread with one pending body per board; a refused or unchanged command publishes nothing, and an accepted one notifies once.
+Regression owners are the board View tests in `hide-core/src/runtime/tests/boards.rs` and the second test of `web/e2e/board.spec.ts`; no latency or CPU was measured.
+
 Every change adding resident work or touching a high-frequency path must explain its cost in the PR's Review section, even when it claims no performance improvement.
 This is a review requirement, not a new CI benchmark or permission to change runtime behavior through documentation.
 Apply engineering principle #14 by naming the resource's owner and cleanup on success, failure, cancellation, owner exit and partial startup.

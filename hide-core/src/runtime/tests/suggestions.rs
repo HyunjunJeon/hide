@@ -924,6 +924,7 @@ fn a_board_belongs_to_the_project_the_catalog_knows_its_checkout_in() {
         created_at_unix_ms: 1,
         updated_at_unix_ms: 1,
         state: BoardState::Open,
+        view: None,
     };
     let book = [
         board("board-1", checkout(&node, &worktree)),

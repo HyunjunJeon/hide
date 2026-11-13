@@ -1890,11 +1890,11 @@ export type ViewDisplaySnapshot = {
   id: string;
   /** The editor tab (document buffer) it shows; null while it is opening or waiting. */
   tab_id: string | null;
-  /** The file or diff it shows; empty for a browser display and an outside file. */
+  /** The file or diff it shows; empty for a browser display, an outside file and a board. */
   path: string;
-  /** The document's name, a browser page's title (its host until it has one), or an outside file's name. */
+  /** The document's name, a browser page's title (its host until it has one), an outside file's name, or a board's title. */
   label: string;
-  kind: "file" | "diff" | "browser" | "external";
+  kind: "file" | "diff" | "browser" | "external" | "board";
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1914,6 +1914,8 @@ export type ViewDisplaySnapshot = {
   not_delivered?: number;
   /** An outside file's desktop grant, name and viewer (PRD outside-path-in-hide); absent for every other kind. */
   external?: { grant: string; name: string; kind: import("./host").ExternalKind };
+  /** A board display's board id (`board-<n>`); the board itself is `rest.boards`. Absent for every other kind. */
+  board?: string;
 };
 
 /** An agent that opened a View (`ViewOpenerSnapshot`). */
@@ -1971,7 +1973,7 @@ export type ViewFeedbackGroup = {
 export type OpenedView = {
   pane_id: string;
   view_id: string;
-  kind: "file" | "diff" | "browser";
+  kind: "file" | "diff" | "browser" | "external" | "board";
   label: string;
   path: string;
   url?: string;
@@ -3441,6 +3443,8 @@ export type SnapshotRest = {
   turn_answer?: TurnAnswerRead;
   /** Each pane's own plan (PRD hide-plan). */
   plans?: PlansSnapshot;
+  /** The boards a display of the front Workspace shows, replaced whole when one of them changes (board design, section 3). */
+  boards?: import("./boards").BoardsRest;
   git_worktrees_loading?: boolean;
   /** The Project tool's `남은 것`: the shown worktree's changes, read by its own path (PRD project-panel-results B9). */
   remains?: RemainsSnapshot | null;

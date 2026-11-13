@@ -728,6 +728,9 @@ impl Runtime {
                         display.kind == DisplayKind::Browser && display.url.as_deref() == Some(url)
                     })
             }
+            (Action::OpenBoard { board }, _) => {
+                !holds(&|display| display.board.as_deref() == Some(board.as_str()))
+            }
             _ => false,
         }
     }
@@ -745,10 +748,15 @@ impl Runtime {
         let mut closable: Vec<_> = layout
             .displays()
             .filter(|display| !fronts.contains(display.id.as_str()))
-            // A file still being restored has no document to close yet.
+            // A file still being restored has no document to close yet. A
+            // board's View closes and its record stays, for `hide board
+            // open` to bring back.
             .filter(|display| match &display.tab_id {
                 Some(tab_id) => !self.document_kept(tab_id),
-                None => matches!(display.kind, DisplayKind::Browser | DisplayKind::External),
+                None => matches!(
+                    display.kind,
+                    DisplayKind::Browser | DisplayKind::External | DisplayKind::Board
+                ),
             })
             .collect();
         closable.sort_by_key(|display| display.last_focused_unix_ms);
@@ -2544,7 +2552,10 @@ impl Runtime {
             // read from that checkout; a diff is always this one's.
             let (workspace_id, checkout_id) = match kind {
                 DisplayKind::File => self.display_source(key, path),
-                DisplayKind::Diff | DisplayKind::Browser | DisplayKind::External => None,
+                DisplayKind::Diff
+                | DisplayKind::Browser
+                | DisplayKind::External
+                | DisplayKind::Board => None,
             }
             .unwrap_or_else(|| front.clone());
             let open = self.snapshot.editor.tabs.iter().any(|tab| {
@@ -2558,7 +2569,7 @@ impl Runtime {
                 continue;
             }
             match kind {
-                DisplayKind::Browser | DisplayKind::External => {}
+                DisplayKind::Browser | DisplayKind::External | DisplayKind::Board => {}
                 DisplayKind::Diff => {
                     self.insert_diff_tab(
                         &workspace_id,
@@ -2957,6 +2968,22 @@ impl Runtime {
         if matches!(display.kind, DisplayKind::Browser | DisplayKind::External) {
             return (ViewDisplayState::Open, None);
         }
+        // A board is drawn from its record, which the core holds from its
+        // start: open while the record is not a deleted stub, whatever the
+        // root or the editor are doing.
+        if display.kind == DisplayKind::Board {
+            return match display.board.as_deref().and_then(|id| self.boards.get(id)) {
+                Some(board)
+                    if !matches!(board.state, crate::boards::BoardState::Deleted { .. }) =>
+                {
+                    (ViewDisplayState::Open, None)
+                }
+                _ => (
+                    ViewDisplayState::Unavailable,
+                    Some(crate::boards::DELETED_REASON.to_owned()),
+                ),
+            };
+        }
         if let Some(tab) = display.tab_id.as_deref().and_then(|id| facts.tabs.get(id)) {
             return match (tab.kind, &tab.unavailable_reason) {
                 (EditorTabKind::Diff, _) => (ViewDisplayState::Open, None),
@@ -2988,9 +3015,10 @@ impl Runtime {
             return (ViewDisplayState::Opening, None);
         }
         let reason = match display.kind {
-            DisplayKind::File | DisplayKind::Browser | DisplayKind::External => {
-                "This view's file is not open; Retry reads it again"
-            }
+            DisplayKind::File
+            | DisplayKind::Browser
+            | DisplayKind::External
+            | DisplayKind::Board => "This view's file is not open; Retry reads it again",
             DisplayKind::Diff => "This view's diff is not open; Retry opens it again",
         };
         (ViewDisplayState::Unavailable, Some(reason.to_owned()))
@@ -3106,6 +3134,7 @@ impl Runtime {
                                     .external
                                     .as_ref()
                                     .map_or_else(String::new, |file| file.name.clone()),
+                                (_, DisplayKind::Board) => board_label(display),
                                 (Some(tab), _) => tab.label.clone(),
                                 (None, DisplayKind::File) => file_label(&display.path),
                                 (None, DisplayKind::Diff) => super::editor::diff_label(
@@ -3128,6 +3157,7 @@ impl Runtime {
                             comments,
                             not_delivered,
                             external: display.external.clone(),
+                            board: display.board.clone(),
                         }
                     })
                     .collect(),
@@ -3183,7 +3213,19 @@ pub(super) fn display_label(display: &Display) -> String {
         DisplayKind::Diff => {
             super::editor::diff_label(&display.path, display.committed.unwrap_or(false))
         }
+        DisplayKind::Board => board_label(display),
     }
+}
+
+/// A board's name on its tab: its title, which the display keeps with its
+/// board (`Runtime::retitle_board_views`), else its id.
+pub(super) fn board_label(display: &Display) -> String {
+    display
+        .title
+        .clone()
+        .filter(|title| !title.is_empty())
+        .or_else(|| display.board.clone())
+        .unwrap_or_default()
 }
 
 pub(super) fn browser_label(display: &Display) -> String {

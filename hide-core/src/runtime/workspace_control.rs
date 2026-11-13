@@ -573,6 +573,55 @@ impl Runtime {
                 load: Some(load),
             });
         }
+        if let Action::OpenBoard { board } = action {
+            let title = self
+                .boards
+                .get(board)
+                .map(|board| board.title.clone())
+                .ok_or(Refusal {
+                    reason: "board_unknown",
+                    next_action: "Run hide board list for your boards' ids and retry",
+                })?;
+            // A board has no editor tab, so it finds its own View: one per
+            // board in a Workspace, in whichever area it is.
+            let view_id = self
+                .change_view_layout(key, |layout, stamp| {
+                    let existing = layout
+                        .displays()
+                        .find(|display| display.board.as_deref() == Some(board.as_str()))
+                        .map(|display| display.id.clone());
+                    if let Some(id) = existing {
+                        layout.focus(&id, stamp)?;
+                        return Ok((id, true));
+                    }
+                    let display = layout.new_board_display(board, &title);
+                    let id = display.id.clone();
+                    let area = layout.active_area().id.clone();
+                    layout.insert(&area, display, stamp)?;
+                    Ok((id, true))
+                })
+                // A Workspace full of Views no cap could close answers as
+                // a file's open does.
+                .map_err(|error| match error {
+                    crate::view_layout::LayoutError::DisplayLimit => Refusal {
+                        reason: "view_limit",
+                        next_action: "Close an unused View or area and retry",
+                    },
+                    other => layout_refusal(other),
+                })?;
+            let area_id = self
+                .view_layout_of(key)
+                .and_then(|layout| layout.area_of(&view_id))
+                .map(|area| area.id.clone());
+            return Ok(ActionResult {
+                context: context.clone(),
+                request_id: request_id.to_owned(),
+                changed: true,
+                view_id,
+                area_id,
+                load: None,
+            });
+        }
         if let Action::OpenFile { .. } | Action::OpenDiff { .. } = action {
             let Some(material) = material else {
                 return Err(Refusal {
@@ -696,7 +745,7 @@ impl Runtime {
         }
         let (view_id, changed, area_id) = match action {
             Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
-            Action::OpenBrowser { .. } | Action::OpenExternal { .. } => {
+            Action::OpenBrowser { .. } | Action::OpenExternal { .. } | Action::OpenBoard { .. } => {
                 unreachable!("handled above")
             }
             Action::Select { view_id, .. } => {
@@ -951,11 +1000,19 @@ impl Runtime {
                             DisplayKind::Diff => "diff",
                             DisplayKind::Browser => "browser",
                             DisplayKind::External => "external",
+                            DisplayKind::Board => "board",
                         },
                         // An outside file's path stays in the operator's
                         // window; an agent reads that a View is there and
                         // nothing of the file (PRD outside-path-in-hide D-09).
-                        target: display.url.as_ref().unwrap_or(&display.path).clone(),
+                        // A board is named by its id, which `hide board`
+                        // takes.
+                        target: display
+                            .url
+                            .as_ref()
+                            .or(display.board.as_ref())
+                            .unwrap_or(&display.path)
+                            .clone(),
                         selected: area.active.as_deref() == Some(display.id.as_str()),
                         active_area: layout.active_area().id == area.id,
                         page: (display.kind == DisplayKind::Browser).then(|| {
@@ -1100,7 +1157,10 @@ fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
 /// where it already was.
 pub(super) fn lane_call(action: &Action) -> bool {
     match action {
-        Action::OpenFile { .. } | Action::OpenDiff { .. } | Action::OpenExternal { .. } => true,
+        Action::OpenFile { .. }
+        | Action::OpenDiff { .. }
+        | Action::OpenExternal { .. }
+        | Action::OpenBoard { .. } => true,
         Action::OpenBrowser { area_id, .. } => area_id.is_none(),
         Action::Select {
             expected_browser_area,
@@ -1112,7 +1172,10 @@ pub(super) fn lane_call(action: &Action) -> bool {
     }
 }
 
-/// Whether an action keeps a receipt for its retry: everything but a read.
+/// Whether an action keeps a receipt for its retry: everything but a read,
+/// and a board's open, whose request id the core makes inside the board
+/// command, so nothing could retry it and a receipt would only take a place
+/// among the kept results.
 fn keeps_receipt(action: &Action) -> bool {
-    !matches!(action, Action::Read { .. })
+    !matches!(action, Action::Read { .. } | Action::OpenBoard { .. })
 }

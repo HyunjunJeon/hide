@@ -176,6 +176,7 @@ section!(RestSections, Snapshot, s, {
     mission_brief: crate::runtime::mission_brief::MissionBriefSnapshot => s.mission_brief,
     turn_answer: crate::runtime::turn_answer::TurnAnswerReadSnapshot => s.turn_answer,
     plans: crate::runtime::plans::PlansSnapshot => s.plans,
+    boards: crate::runtime::boards::BoardsSnapshot => s.boards; generation s.boards_generation,
     sessions: SessionsSnapshot => s.sessions,
     card: CheckoutCardSnapshot => s.card,
     git_worktrees: Option<ProjectWorktreesSnapshot> => s.git_worktrees,

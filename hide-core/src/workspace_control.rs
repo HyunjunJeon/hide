@@ -113,6 +113,14 @@ pub enum Action {
         name: String,
         kind: ExternalKind,
     },
+    /// A caller's `hide board new` or `hide board open`: the board's View,
+    /// brought forward or made again. The core makes it inside the board
+    /// command, which checks the board is the caller's to show; no
+    /// caller's wire decodes it.
+    #[serde(skip_deserializing)]
+    OpenBoard {
+        board: String,
+    },
     Select {
         view_id: String,
         /// When supplied by a browser capability, the target must still be

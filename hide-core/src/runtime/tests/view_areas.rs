@@ -27,7 +27,7 @@ fn open(runtime: &mut Runtime, checkout_id: &str, path: &Path, preview: bool, be
 
 /// Sends a `view_layout` action as the web does, named for the Workspace of
 /// the frame it was taken on.
-fn act(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
+pub(super) fn act(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
     runtime.sync_workspace_view();
     let view = runtime
         .snapshot
@@ -58,7 +58,9 @@ fn tree(runtime: &mut Runtime) -> ViewLayoutSnapshot {
 }
 
 /// Every area in tree order with its displays.
-fn areas(layout: &ViewLayoutSnapshot) -> Vec<(String, Option<String>, Vec<ViewDisplaySnapshot>)> {
+pub(super) fn areas(
+    layout: &ViewLayoutSnapshot,
+) -> Vec<(String, Option<String>, Vec<ViewDisplaySnapshot>)> {
     let mut found = Vec::new();
     let mut nodes = vec![&layout.root];
     while let Some(node) = nodes.pop() {

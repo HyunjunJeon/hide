@@ -509,7 +509,7 @@ impl Runtime {
                     opener: kept.opener,
                 });
             }
-            DisplayKind::External => return Err("mission_view_not_kept"),
+            DisplayKind::External | DisplayKind::Board => return Err("mission_view_not_kept"),
         }
         // Not open now, it opens only while its file's read or its device's
         // front is still to come; otherwise the reveal was refused as it was
