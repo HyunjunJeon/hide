@@ -1508,3 +1508,112 @@ fn a_parent_opens_its_childs_board_as_its_own_and_only_the_parents_row_waits() {
     );
     assert_eq!(edited["view"]["id"], view.as_str());
 }
+
+/// A mission's shape: the worker draws its board in its own worktree (B),
+/// and its Conductor, in the project checkout (A), shows it to the operator
+/// by opening it from its own pane. The View opens in A as the Conductor's
+/// to look at, nothing opens in B, A's frame carries the board, and the
+/// worker's later edit reaches that frame.
+#[test]
+fn a_parent_in_another_checkout_opens_its_childs_board_in_its_own() {
+    let root = tempfile::tempdir().unwrap();
+    let lineage = |runtime: &mut Runtime| {
+        let mut ledger = crate::delivery::ledger::Ledger::default();
+        ledger
+            .agents
+            .push(registration("agent-1", "sender", "native-sender", None));
+        ledger.agents.push(registration(
+            "agent-2",
+            "recipient",
+            "native-recipient",
+            Some("agent-1"),
+        ));
+        runtime.delivery_ledger = Ok(Arc::new(ledger));
+    };
+    {
+        let runtime = on_screen(root.path(), true);
+        let mut guard = runtime.lock().unwrap();
+        let mut draw = login_flow();
+        draw["no_open"] = json!(true);
+        ok(&mut guard, &recipient(), draw);
+        saved(root.path(), "board-1", 1);
+    }
+    // The worker drew it in its own worktree.
+    let worktree = "/checkouts/worker";
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
+    let mut board: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    board["checkout"]["path"] = json!(worktree);
+    std::fs::write(&file, serde_json::to_vec(&board).unwrap()).unwrap();
+
+    let runtime = on_screen(root.path(), true);
+    let mut guard = runtime.lock().unwrap();
+    keyboard(&mut guard, None);
+    lineage(&mut guard);
+    let conductor = Actor {
+        pane_id: "sender".into(),
+        name: "sender".into(),
+        kind: "codex".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        session: Some("sender-session".into()),
+    };
+    let opened = ok(
+        &mut guard,
+        &conductor,
+        json!({"verb": "open", "board": "board-1"}),
+    );
+    assert_eq!(opened["view"]["unseen"], true);
+    let view = view_of(&opened);
+    // In A's active area, the Conductor's, still to look at.
+    let layout = guard.view_layout_of(&key()).unwrap();
+    assert_eq!(
+        layout.area_of(&view).map(|area| area.id.as_str()),
+        Some(layout.active_area().id.as_str())
+    );
+    let display = layout.display(&view).unwrap();
+    assert_eq!(
+        (
+            display.board.as_deref(),
+            display
+                .opener
+                .as_ref()
+                .map(|opener| opener.terminal_id.as_str()),
+            display.unseen.is_some()
+        ),
+        (Some("board-1"), Some("term-sender"), true)
+    );
+    // Nothing opens in B.
+    let home = (crate::node::TEST_NODE.to_owned(), worktree.to_owned());
+    assert!(
+        guard
+            .view_layout_of(&home)
+            .is_none_or(|layout| { layout.displays().all(|display| display.board.is_none()) })
+    );
+    let lead = row(&guard, "sender");
+    assert_eq!(
+        (lead.group.as_str(), lead.mark),
+        ("needs_you", RowMark::Look)
+    );
+    assert_eq!(lead.look.as_ref().unwrap().view_id, view);
+    let child = row(&guard, "recipient");
+    assert_ne!(child.group, "needs_you");
+    assert!(child.look.is_none());
+
+    // A is in front, so its frame carries the board, and the worker's edit
+    // reaches it.
+    let first = rest_boards(&mut guard);
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|board| board.id.as_str())
+            .collect::<Vec<_>>(),
+        ["board-1"]
+    );
+    edit_first_text(&mut guard, &recipient(), "Second text");
+    let edited = rest_boards(&mut guard);
+    assert!(edited.revision > first.revision);
+    assert_eq!(
+        edited.items[0].blocks[0].markdown,
+        "## What changes\n\nSecond text"
+    );
+}
