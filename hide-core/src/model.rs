@@ -671,6 +671,26 @@ pub struct RecordViewSnapshot {
     pub session: crate::links::ledger::SessionIdentity,
 }
 
+/// A board of a session record's tree, as its 결과물 tile shows it: pressing
+/// an open board's tile opens it again (`board_open`), a kept board's opens
+/// its file.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecordBoardSnapshot {
+    pub id: String,
+    pub title: String,
+    /// `open` or `kept` (`board_state`).
+    pub state: &'static str,
+    /// The machine and checkout the board was drawn in.
+    pub device_id: String,
+    pub checkout_path: String,
+    /// A kept board's file, below its checkout's root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept_path: Option<String>,
+    pub updated_at_unix_ms: u64,
+    /// The session of the record's tree that drew it.
+    pub session: crate::links::ledger::SessionIdentity,
+}
+
 /// A View the agent in a pane opened that is still open, as the phone's
 /// 볼 것 tab lists it (PRD mobile-companion-ui D-07): the same tile a session
 /// record's gallery draws, with whether the operator has looked at it. It
@@ -10591,6 +10611,33 @@ mod wire_enum_tests {
             let names: Vec<&str> = states.iter().map(BoardState::name).collect();
             assert_wire(&contract, "board_state", &names);
             checked.insert("board_state");
+            use crate::runtime::boards::{KeepFailure, KeepState};
+            let keeps = [KeepState::Running, KeepState::Failed];
+            for variant in keeps {
+                match variant {
+                    KeepState::Running | KeepState::Failed => {}
+                }
+            }
+            assert_wire(&contract, "board_keep_state", &keeps);
+            checked.insert("board_keep_state");
+            let failures = [
+                KeepFailure::KeepPathRefused,
+                KeepFailure::KeepExists,
+                KeepFailure::KeepBusy,
+                KeepFailure::KeepUnknown,
+                KeepFailure::KeepFailed,
+            ];
+            for variant in failures {
+                match variant {
+                    KeepFailure::KeepPathRefused
+                    | KeepFailure::KeepExists
+                    | KeepFailure::KeepBusy
+                    | KeepFailure::KeepUnknown
+                    | KeepFailure::KeepFailed => {}
+                }
+            }
+            assert_wire(&contract, "board_keep_failure", &failures);
+            checked.insert("board_keep_failure");
         }
 
         {

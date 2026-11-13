@@ -17,12 +17,14 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::Runtime;
+use super::workspace_view::WorkspaceKey;
 use crate::board_store::{self, BoardFiles, IndexLine, Restored};
 use crate::boards::{
     self, BOOK_LIMIT, Board, BoardCheckout, BoardCommand, BoardState, Body, OPEN_PER_SESSION,
     Remover, Tone, ViewHint,
 };
 use crate::coordination::refusal;
+use crate::files;
 use crate::links::ledger::SessionIdentity;
 use crate::view_layout::Display;
 use crate::workspace_control::{Action, Caller, Context, Query};
@@ -30,6 +32,10 @@ use crate::workspace_control::{Action, Caller, Context, Query};
 /// Parents an ancestor read walks up at most, so a ledger whose parents
 /// loop cannot hold the lock.
 const LINEAGE_HOPS: usize = 64;
+
+/// One board the front Workspace shows, as `rest.boards` was made from it:
+/// its id, revision, state and keep.
+type Shown = (String, u64, &'static str, Option<BoardKeepView>);
 
 #[derive(Default)]
 pub(crate) struct BoardRuntime {
@@ -46,7 +52,7 @@ pub(crate) struct BoardRuntime {
     /// Each board the front Workspace shows, by its revision and state, as
     /// `rest.boards` was last made from: the projection is made again only
     /// when this moves.
-    shown: Option<Vec<(String, u64, &'static str)>>,
+    shown: Option<Vec<Shown>>,
     /// The stamp `rest.boards` carries, moved each time it is made again.
     generation: u64,
     /// The View layouts' generation the board records' View hints were last
@@ -55,6 +61,63 @@ pub(crate) struct BoardRuntime {
     /// Set while the start puts the boards' Views back, so their hints are
     /// read once, after the last.
     restoring: bool,
+    /// Each board the operator is keeping as a file, or whose keep failed,
+    /// by id: one keep runs per board, and a failure stays until the next
+    /// keep of that board, for its View's head to show with Retry.
+    pub(super) keeps: HashMap<String, BoardKeepView>,
+}
+
+/// Where the operator's keep of a board stands, as its View's head shows it
+/// (board design, section 4, Keep).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BoardKeepView {
+    /// The path below the board's checkout it is kept at.
+    pub path: String,
+    pub state: KeepState,
+    /// Why it failed, while it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<KeepFailure>,
+    /// The host's or the rule's words for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `contracts/snapshot-wire-enums.json`: `board_keep_state`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepState {
+    Running,
+    Failed,
+}
+
+/// Why a keep failed (`board_keep_failure`): the path is not one a board is
+/// kept at, something is already at it, the checkout's host was full, the
+/// save's answer was lost and the file could not be read back, or anything
+/// else the host or the link said.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepFailure {
+    KeepPathRefused,
+    KeepExists,
+    KeepBusy,
+    KeepUnknown,
+    KeepFailed,
+}
+
+impl BoardKeepView {
+    fn running(&self) -> bool {
+        self.state == KeepState::Running
+    }
+}
+
+/// A keep handed to its worker, with what its answer needs under the lock.
+pub(super) struct KeepRequest {
+    board: String,
+    path: String,
+    workspace_id: String,
+    checkout_id: String,
+    /// The kept file's path on its machine, as its file View names it.
+    absolute: String,
 }
 
 /// `rest.boards`: the boards a display of the front Workspace's View layout
@@ -77,6 +140,9 @@ pub struct BoardView {
     pub revision: u64,
     pub updated_at_unix_ms: u64,
     pub blocks: Vec<BoardBlockView>,
+    /// The operator's keep of it, while one runs or after one failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep: Option<BoardKeepView>,
 }
 
 /// One block as the board View draws it: its body as the export writes it
@@ -105,8 +171,9 @@ pub struct QuoteRef {
 }
 
 impl BoardView {
-    fn of(board: &Board) -> Self {
+    fn of(board: &Board, keep: Option<&BoardKeepView>) -> Self {
         Self {
+            keep: keep.cloned(),
             id: board.id.clone(),
             title: board.title.clone(),
             state: board.state.name(),
@@ -320,6 +387,7 @@ impl Runtime {
             } => {
                 let current = self.own_board(&own, &board)?;
                 boards::check_changeable(current, revision)?;
+                self.check_not_keeping(&board)?;
                 match boards::apply_set(current, title.as_deref(), &blocks, now)? {
                     Some(next) => {
                         let mut answer = json!({"board": boards::summary(&next)});
@@ -345,6 +413,7 @@ impl Runtime {
             } => {
                 let current = self.own_board(&own, &board)?;
                 boards::check_changeable(current, revision)?;
+                self.check_not_keeping(&board)?;
                 // An edit never touches the View's unseen record: a board the
                 // operator looked at stays seen, and its View draws the edit
                 // from `rest.boards` in place (board design, section 3).
@@ -411,10 +480,11 @@ impl Runtime {
                 if matches!(current.state, BoardState::Deleted { .. }) {
                     return Err("board_deleted".into());
                 }
-                let stub = boards::deleted(current, Remover::Agent, now);
-                let answer = json!({"board": boards::summary(&stub)});
-                self.keep_boards(vec![(board, Some(stub))]);
-                (answer, true)
+                self.check_not_keeping(&board)?;
+                let stub = self
+                    .delete_board(&board, Remover::Agent, now)
+                    .ok_or("board_unknown")?;
+                (json!({"board": boards::summary(&stub)}), true)
             }
         };
         if changed {
@@ -435,23 +505,24 @@ impl Runtime {
         if self.boards.book.is_empty() && self.snapshot.boards.items.is_empty() {
             return;
         }
-        let shown: Vec<(String, u64, &'static str)> = self
+        let shown: Vec<Shown> = self
             .front_workspace_key()
             .and_then(|key| self.view_layout_of(&key))
             .map(|layout| {
-                let mut shown: Vec<(String, u64, &'static str)> = Vec::new();
+                let mut shown: Vec<Shown> = Vec::new();
                 for display in layout.displays() {
                     let Some(id) = display.board.as_deref() else {
                         continue;
                     };
-                    if shown.iter().any(|(known, _, _)| known == id) {
+                    if shown.iter().any(|(known, ..)| known == id) {
                         continue;
                     }
                     let (revision, state) = self
                         .boards
                         .get(id)
                         .map_or((0, "gone"), |board| (board.revision, board.state.name()));
-                    shown.push((id.to_owned(), revision, state));
+                    let keep = self.boards.keeps.get(id).cloned();
+                    shown.push((id.to_owned(), revision, state, keep));
                 }
                 shown
             })
@@ -459,20 +530,23 @@ impl Runtime {
         if self.boards.shown.as_ref() == Some(&shown) {
             return;
         }
-        // A board whose revision and state did not move keeps the item the
-        // last frame built; only a board that moved is drawn again.
+        // A board whose revision, state and keep did not move keeps the item
+        // the last frame built; only a board that moved is drawn again.
         let items = shown
             .iter()
-            .filter_map(|(id, revision, state)| {
+            .filter_map(|(id, revision, state, keep)| {
                 let kept = self.snapshot.boards.items.iter().find(|item| {
-                    item.id == *id && item.revision == *revision && item.state == *state
+                    item.id == *id
+                        && item.revision == *revision
+                        && item.state == *state
+                        && item.keep == *keep
                 });
                 match kept {
                     Some(item) => Some(std::sync::Arc::clone(item)),
                     None => self
                         .boards
                         .get(id)
-                        .map(|board| std::sync::Arc::new(BoardView::of(board))),
+                        .map(|board| std::sync::Arc::new(BoardView::of(board, keep.as_ref()))),
                 }
             })
             .collect();
@@ -840,6 +914,8 @@ impl Runtime {
             let lines = self.boards.book.values().map(IndexLine::of).collect();
             files.save(changes, self.boards.next.max(1), lines);
         }
+        // The session record shown lists its sessions' boards.
+        self.settle_record_views();
     }
 
     /// Drops the boards of sessions that were deleted or pruned, as their
@@ -861,6 +937,419 @@ impl Runtime {
             "boards": gone.iter().map(|(id, _)| id).collect::<Vec<_>>(),
         }));
         self.keep_boards(gone);
+        true
+    }
+}
+
+/// What the operator does to a board from its View or the session record
+/// (board design, section 4): keep it as a file, delete it, or open it again.
+impl Runtime {
+    /// Refuses an agent's change to board `id` while the operator keeps it:
+    /// the file holds the board as it was when they pressed keep, so nothing
+    /// may change it under the write.
+    fn check_not_keeping(&self, id: &str) -> Result<(), String> {
+        if self
+            .boards
+            .keeps
+            .get(id)
+            .is_some_and(BoardKeepView::running)
+        {
+            return Err("board_keeping".into());
+        }
+        Ok(())
+    }
+
+    /// The catalog's workspace and checkout ids of a board's checkout, which
+    /// a file's read and open name it by.
+    fn board_checkout_ids(&self, checkout: &BoardCheckout) -> Option<(String, String)> {
+        self.catalog_workspaces()
+            .filter(|workspace| workspace.device_id == checkout.device_id)
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|held| held.path == checkout.path)
+                    .map(|held| (workspace.id.clone(), held.id.clone()))
+            })
+    }
+
+    /// The operator's `파일로 남기기`: board `id`'s export written into a new
+    /// Markdown file at `path` below its checkout's root, on the machine
+    /// that holds the checkout, by a worker off the lock. One keep runs per
+    /// board; a refusal or a failure is the board's to show on its View's
+    /// head, and the next keep of it starts over.
+    pub(super) fn keep_board(&mut self, id: &str, path: &str) -> bool {
+        let Some(board) = self.boards.get(id) else {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.keep_refused",
+                "board": id, "reason": "board_unknown",
+            }));
+            return false;
+        };
+        if board.state != BoardState::Open {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.keep_refused",
+                "board": id, "reason": board.state.name(),
+            }));
+            return false;
+        }
+        if self
+            .boards
+            .keeps
+            .get(id)
+            .is_some_and(BoardKeepView::running)
+        {
+            return false;
+        }
+        if let Some(reason) = boards::keep_path_refused(path) {
+            return self.keep_failed(
+                id,
+                path,
+                KeepFailure::KeepPathRefused,
+                format!("{path} {reason}"),
+            );
+        }
+        let relative = match hide_platform::path::RelPath::parse(path) {
+            Ok(relative) => relative,
+            Err(error) => {
+                return self.keep_failed(id, path, KeepFailure::KeepPathRefused, error.to_string());
+            }
+        };
+        let contents = boards::markdown(board);
+        let checkout = board.checkout.clone();
+        let source = self
+            .board_checkout_ids(&checkout)
+            .ok_or_else(|| {
+                format!(
+                    "The board's checkout {} is not open in Hide; open its project, then keep the board again",
+                    checkout.path
+                )
+            })
+            .and_then(|(workspace_id, checkout_id)| {
+                let (root, channel) = self.document_source(&workspace_id, &checkout_id)?;
+                Ok((workspace_id, checkout_id, root, channel))
+            });
+        let (workspace_id, checkout_id, root, channel) = match source {
+            Ok(source) => source,
+            Err(reason) => return self.keep_failed(id, path, KeepFailure::KeepFailed, reason),
+        };
+        self.boards.keeps.insert(
+            id.to_owned(),
+            BoardKeepView {
+                path: path.to_owned(),
+                state: KeepState::Running,
+                code: None,
+                reason: None,
+            },
+        );
+        crate::diagnostic!(json!({
+            "component": "boards", "kind": "boards.keep_started",
+            "board": id, "device": root.device_id,
+        }));
+        let request = KeepRequest {
+            board: id.to_owned(),
+            path: path.to_owned(),
+            workspace_id,
+            checkout_id,
+            absolute: hide_platform::path::wire_join(&root.path, &relative),
+        };
+        // A runtime with no shared mutex writes in place, as a document read
+        // does; every shared runtime writes on a worker, the local disk
+        // included, since a slow volume must not stall the lock.
+        let Some(context) = self.worker_context.clone() else {
+            let outcome = files::write_new_file(channel.as_ref(), &root, &relative, &contents);
+            self.ingest_board_keep(request, outcome);
+            return true;
+        };
+        let board = id.to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("hide-core-board-keep".to_owned())
+            .spawn(move || {
+                let outcome = files::write_new_file(channel.as_ref(), &root, &relative, &contents);
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_board_keep(request, outcome),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            });
+        if let Err(error) = spawned {
+            return self.keep_failed(
+                &board,
+                path,
+                KeepFailure::KeepFailed,
+                format!("The keep could not start: {error}; nothing was written"),
+            );
+        }
+        true
+    }
+
+    /// Board `id`'s keep at `path` failed with `code`: its View's head says
+    /// why and offers the keep again.
+    fn keep_failed(&mut self, id: &str, path: &str, code: KeepFailure, reason: String) -> bool {
+        crate::diagnostic!(json!({
+            "component": "boards", "kind": "boards.keep_failed",
+            "board": id, "code": code, "reason": reason,
+        }));
+        self.boards.keeps.insert(
+            id.to_owned(),
+            BoardKeepView {
+                path: path.to_owned(),
+                state: KeepState::Failed,
+                code: Some(code),
+                reason: Some(reason),
+            },
+        );
+        true
+    }
+
+    /// A keep's answer, under the lock: a written file makes the board
+    /// `kept` and its View that file's; anything else is the board's to show.
+    /// No agent command changed the board meanwhile (`check_not_keeping`);
+    /// one the operator deleted while it was written keeps the file and stays
+    /// deleted.
+    pub(super) fn ingest_board_keep(
+        &mut self,
+        request: KeepRequest,
+        outcome: files::NewFileOutcome,
+    ) -> bool {
+        use files::NewFileOutcome;
+        self.boards.keeps.remove(&request.board);
+        let Some(board) = self
+            .boards
+            .get(&request.board)
+            .filter(|board| board.state == BoardState::Open)
+            .cloned()
+        else {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.keep_after_change",
+                "board": request.board, "written": outcome == NewFileOutcome::Written,
+            }));
+            return true;
+        };
+        let (code, reason) = match outcome {
+            NewFileOutcome::Written => {
+                let kept = Board {
+                    state: BoardState::Kept {
+                        kept_path: request.path.clone(),
+                        kept_at_unix_ms: super::memory::now_ms(),
+                    },
+                    // A kept board's View becomes its file's; nothing of it
+                    // is put back after a restart.
+                    view: None,
+                    ..board
+                };
+                self.keep_boards(vec![(request.board.clone(), Some(kept))]);
+                crate::diagnostic!(json!({
+                    "component": "boards", "kind": "boards.kept",
+                    "board": request.board,
+                }));
+                self.show_kept_file(&request);
+                return true;
+            }
+            NewFileOutcome::Exists(reason) => (KeepFailure::KeepExists, reason),
+            NewFileOutcome::Busy(reason) => (KeepFailure::KeepBusy, reason),
+            NewFileOutcome::Unknown(reason) => (KeepFailure::KeepUnknown, reason),
+            NewFileOutcome::Failed(reason) => (KeepFailure::KeepFailed, reason),
+        };
+        self.keep_failed(&request.board, &request.path, code, reason)
+    }
+
+    /// A kept board's View in its own checkout becomes its file's, in the
+    /// same area at the same place, once the file is read: the operator's own
+    /// open, seen and wearing no agent's mark. Its Views in other checkouts
+    /// close, since the file is not of their checkout.
+    fn show_kept_file(&mut self, request: &KeepRequest) {
+        let home = self.boards.get(&request.board).map(|board| {
+            (
+                board.checkout.device_id.clone(),
+                board.checkout.path.clone(),
+            )
+        });
+        let shown: Vec<(WorkspaceKey, String, String)> = self
+            .every_view_layout()
+            .flat_map(|(key, layout)| {
+                layout
+                    .areas()
+                    .into_iter()
+                    .flat_map(|area| {
+                        area.displays
+                            .iter()
+                            .filter(|display| {
+                                display.board.as_deref() == Some(request.board.as_str())
+                            })
+                            .map(|display| (key.clone(), area.id.clone(), display.id.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut swapped = false;
+        for (key, area, display) in shown {
+            if !swapped && Some(&key) == home.as_ref() {
+                swapped = true;
+                let source = self.document_source(&request.workspace_id, &request.checkout_id);
+                match source {
+                    Ok((root, channel)) => self.start_document_open(
+                        root,
+                        channel,
+                        super::documents::OpenRequestFields {
+                            workspace_id: request.workspace_id.clone(),
+                            checkout_id: request.checkout_id.clone(),
+                            path: request.absolute.clone(),
+                            preview: false,
+                            reload: false,
+                            reveal: None,
+                            restore: false,
+                            placement: Some(super::view_areas::ViewPlacement {
+                                key,
+                                owner: None,
+                                area,
+                                preview: false,
+                                beside: false,
+                                replace: Some(display),
+                            }),
+                        },
+                    ),
+                    Err(reason) => {
+                        crate::diagnostic!(json!({
+                            "component": "boards", "kind": "boards.kept_file_unopened",
+                            "board": request.board, "reason": reason,
+                        }));
+                    }
+                }
+                continue;
+            }
+            self.close_view_display(&key, &display, None, false);
+        }
+        self.refresh_unseen_rows();
+    }
+
+    /// Whether board `id` is kept at the file `path` of the checkout `key`,
+    /// so its View may become that file's (`try_place_document_at`).
+    pub(super) fn board_kept_at(&self, id: &str, key: &WorkspaceKey, path: &str) -> bool {
+        self.boards.get(id).is_some_and(|board| match &board.state {
+            BoardState::Kept { kept_path, .. } => {
+                board.checkout.device_id == key.0
+                    && board.checkout.path == key.1
+                    && hide_platform::path::RelPath::parse(kept_path).is_ok_and(|relative| {
+                        hide_platform::path::wire_join(&board.checkout.path, &relative) == path
+                    })
+            }
+            _ => false,
+        })
+    }
+
+    /// Deletes board `id` for `by`: its blocks go and a stub stays, so a later
+    /// command answers `board_deleted`; every View of it closes, in every
+    /// checkout that shows it, and its unseen record with it, so a deleted
+    /// board asks the operator to look at nothing.
+    fn delete_board(&mut self, id: &str, by: Remover, now: u64) -> Option<Board> {
+        let stub = boards::deleted(self.boards.get(id)?, by, now);
+        self.boards.keeps.remove(id);
+        self.keep_boards(vec![(id.to_owned(), Some(stub.clone()))]);
+        let shown: Vec<(WorkspaceKey, String)> = self
+            .every_view_layout()
+            .flat_map(|(key, layout)| {
+                layout
+                    .displays()
+                    .filter(|display| display.board.as_deref() == Some(id))
+                    .map(|display| (key.clone(), display.id.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (key, display) in shown {
+            self.close_view_display(&key, &display, None, false);
+        }
+        self.refresh_unseen_rows();
+        Some(stub)
+    }
+
+    /// The operator's `지우기`, confirmed: an open or kept board is deleted as
+    /// the agent's own delete does, but not while it is being kept.
+    pub(super) fn operator_delete_board(&mut self, id: &str) -> bool {
+        let refused = match self.boards.get(id).map(|board| &board.state) {
+            None => Some("board_unknown"),
+            Some(BoardState::Deleted { .. }) => Some("board_deleted"),
+            Some(_) if self.check_not_keeping(id).is_err() => Some("board_keeping"),
+            Some(_) => None,
+        };
+        if let Some(reason) = refused {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.delete_refused",
+                "board": id, "reason": reason,
+            }));
+            return false;
+        }
+        self.delete_board(id, Remover::Operator, super::memory::now_ms());
+        crate::diagnostic!(json!({
+            "component": "boards", "kind": "boards.deleted_by_operator", "board": id,
+        }));
+        true
+    }
+
+    /// The operator's press on an open board's tile in the session record:
+    /// its View in the board's own checkout comes to the front of its area,
+    /// made again when it was closed, as the operator's own open (seen) that
+    /// still wears the mark of the agent that drew it while that agent's
+    /// session runs in a pane.
+    pub(super) fn operator_open_board(&mut self, id: &str) -> bool {
+        let Some(board) = self
+            .boards
+            .get(id)
+            .filter(|board| board.state == BoardState::Open)
+        else {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.open_refused", "board": id,
+            }));
+            return false;
+        };
+        let key: WorkspaceKey = (
+            board.checkout.device_id.clone(),
+            board.checkout.path.clone(),
+        );
+        let title = board.title.clone();
+        let owner = board.owner.clone();
+        let existing = self
+            .view_layout_of(&key)
+            .and_then(|layout| shown_board(layout, id))
+            .map(|display| display.id.clone());
+        let opener = match existing {
+            Some(_) => None,
+            None => self
+                .live_sessions()
+                .into_iter()
+                .find(|(_, session)| *session == owner)
+                .and_then(|(pane, _)| self.opener_of_pane(&pane)),
+        };
+        if existing.is_none() && !self.make_view_room(&key) {
+            return true;
+        }
+        let opened = self.change_view_layout(&key, |layout, stamp| {
+            if let Some(view) = &existing {
+                layout.focus(view, stamp)?;
+                return Ok(((), true));
+            }
+            let mut display = layout.new_board_display(id, &title);
+            if let Some(opener) = opener {
+                display.opened_by(opener);
+            }
+            display.operator = true;
+            let area = layout.active_area().id.clone();
+            layout.insert(&area, display, stamp)?;
+            Ok(((), true))
+        });
+        if let Err(error) = opened {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.open_failed",
+                "board": id, "device": key.0, "error": error.kind(),
+            }));
+        }
         true
     }
 }

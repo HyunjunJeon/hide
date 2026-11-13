@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BOARD_CHANGE_MARK_MS, BoardView, type BoardDisplayState } from "./BoardView";
+import { BOARD_CHANGE_MARK_MS, BoardControls, BoardKeepNotice, BoardView, type BoardDisplayState } from "./BoardView";
 import type { BoardView as Board } from "./boards";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { clientI18n } from "./i18n/translator";
@@ -148,5 +148,38 @@ describe("BoardView", () => {
     expect(container.querySelector('[data-area-empty="board-unavailable"]')?.textContent).toContain("This board was deleted.");
     act(() => container.querySelector<HTMLButtonElement>("[data-board-close]")!.click());
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the head's keep and delete (board design, section 4)", () => {
+    async function drawWith(board: Board, onKeep = vi.fn(), onDelete = vi.fn(), onRetry = vi.fn()) {
+      const controls = <BoardControls board={board} defaultPath="docs/boards/2026-11-13-login-flow.md" onKeep={onKeep} onDelete={onDelete} />;
+      const notice = board.keep?.state === "failed" && board.keep.code ? <BoardKeepNotice code={board.keep.code} path={board.keep.path} onRetry={onRetry} /> : null;
+      await act(async () => root.render(<TooltipProvider><BoardView board={board} state="open" label="Login flow" controls={controls} notice={notice} onCloseView={() => undefined} /></TooltipProvider>));
+    }
+    const control = (name: string) => container.querySelector<HTMLButtonElement>(`[data-board-${name}]`);
+
+    it("offers both on an open board, and rests them while a keep runs", async () => {
+      await drawWith(referenceBoard(NOW));
+      expect([control("keep")?.disabled, control("delete")?.disabled]).toEqual([false, false]);
+      await drawWith({ ...referenceBoard(NOW), keep: { path: "docs/a.md", state: "running" } });
+      expect([control("keep")?.textContent, control("keep")?.disabled, control("delete")?.disabled]).toEqual(["Keeping…", true, true]);
+    });
+
+    it("offers neither on a kept board, which is read-only until its View becomes its file's", async () => {
+      await drawWith({ ...referenceBoard(NOW), state: "kept" });
+      expect([control("keep"), control("delete")]).toEqual([null, null]);
+      expect(blockIds().length).toBeGreaterThan(0);
+    });
+
+    it("says why the last keep failed and keeps the same path again", async () => {
+      const retry = vi.fn();
+      await drawWith({ ...referenceBoard(NOW), keep: { path: "docs/taken.md", state: "failed", code: "keep_exists", reason: "docs/taken.md already holds something else" } }, vi.fn(), vi.fn(), retry);
+      const notice = container.querySelector<HTMLElement>("[data-board-keep-failed]");
+      expect(notice?.dataset.boardKeepFailed).toBe("keep_exists");
+      expect(notice?.textContent).toContain("A file with content is already there");
+      expect(notice?.textContent).toContain("docs/taken.md");
+      act(() => container.querySelector<HTMLButtonElement>("[data-board-keep-retry]")!.click());
+      expect(retry).toHaveBeenCalledTimes(1);
+    });
   });
 });

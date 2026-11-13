@@ -560,13 +560,58 @@ impl Runtime {
             return;
         };
         let (views, omitted) = self.record_views(record);
-        if held.views == views && held.views_omitted == omitted {
+        let boards = self.record_boards(record);
+        if held.views == views && held.views_omitted == omitted && held.boards == boards {
             return;
         }
         let mut next = crate::links::ledger::SessionRecordSnapshot::clone(held);
         next.views = views;
         next.views_omitted = omitted;
+        next.boards = boards;
         self.snapshot.session_record = Some(Arc::new(next));
+    }
+
+    /// The boards `record`'s session and its descendants drew that are open
+    /// or kept, updated last first, at most `RECORD_VIEWS`: a deleted board
+    /// is nothing to get back.
+    fn record_boards(
+        &self,
+        record: &crate::links::ledger::SessionRecord,
+    ) -> Vec<crate::model::RecordBoardSnapshot> {
+        use crate::boards::BoardState;
+        use crate::links::ledger::{SessionIdentity, SessionRecord};
+        fn tree<'a>(record: &'a SessionRecord, into: &mut Vec<&'a SessionIdentity>) {
+            into.push(&record.session);
+            for child in &record.children {
+                tree(child, into);
+            }
+        }
+        let mut sessions = Vec::new();
+        tree(record, &mut sessions);
+        let mut found: Vec<crate::model::RecordBoardSnapshot> = self
+            .boards
+            .boards()
+            .filter(|board| !matches!(board.state, BoardState::Deleted { .. }))
+            .filter_map(|board| {
+                let session = sessions.iter().find(|session| ***session == board.owner)?;
+                Some(crate::model::RecordBoardSnapshot {
+                    id: board.id.clone(),
+                    title: board.title.clone(),
+                    state: board.state.name(),
+                    device_id: board.checkout.device_id.clone(),
+                    checkout_path: board.checkout.path.clone(),
+                    kept_path: match &board.state {
+                        BoardState::Kept { kept_path, .. } => Some(kept_path.clone()),
+                        _ => None,
+                    },
+                    updated_at_unix_ms: board.updated_at_unix_ms,
+                    session: (*session).clone(),
+                })
+            })
+            .collect();
+        found.sort_by_key(|board| std::cmp::Reverse(board.updated_at_unix_ms));
+        found.truncate(RECORD_VIEWS);
+        found
     }
 
     /// The outputs among the Views `record`'s session and its descendants

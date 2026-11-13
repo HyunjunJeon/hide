@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { boardDisplayState, boardOf, calloutBody, changedBlocks, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardState, type BoardView } from "./boards";
+import { boardDisplayState, boardOf, calloutBody, changedBlocks, defaultKeepPath, quoteBody, quoteCaption, type BoardBlockKind, type BoardCalloutTone, type BoardKeepFailure, type BoardKeepState, type BoardState, type BoardView } from "./boards";
 import type { ViewDisplaySnapshot } from "./snapshot";
 import { showsSameDocument } from "./viewLayout";
 import { boardBlock, exportBlock } from "./gallery/boardSceneData";
@@ -87,6 +87,10 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
     expect(Object.keys(kinds)).toEqual(contract.board_block_kind);
     expect(Object.keys(tones)).toEqual(contract.board_callout_tone);
     expect(Object.keys(states)).toEqual(contract.board_state);
+    const keeps: Record<BoardKeepState, true> = { running: true, failed: true };
+    const failures: Record<BoardKeepFailure, true> = { keep_path_refused: true, keep_exists: true, keep_busy: true, keep_unknown: true, keep_failed: true };
+    expect(Object.keys(keeps)).toEqual(contract.board_keep_state);
+    expect(Object.keys(failures)).toEqual(contract.board_keep_failure);
   });
 
   it("counts two Views the same content only when they show one board", () => {
@@ -94,5 +98,21 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
     expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-1"))).toBe(true);
     expect(showsSameDocument(display("d1", "board-1"), display("d2", "board-2"))).toBe(false);
     expect(showsSameDocument(display("d1", "board-1"), display("d2"))).toBe(false);
+  });
+});
+
+describe("where 파일로 남기기 offers to keep a board (board design, section 4)", () => {
+  const on = new Date(2026, 10, 3, 23, 59);
+  it("is docs/boards/, the operator's date, then the title's ASCII words", () => {
+    expect(defaultKeepPath({ id: "board-4", title: "Login flow: v2 (draft)" }, on)).toBe("docs/boards/2026-11-03-login-flow-v2-draft.md");
+  });
+  it("falls back to the board's id when the title has no ASCII word", () => {
+    expect(defaultKeepPath({ id: "board-4", title: "로그인 흐름" }, on)).toBe("docs/boards/2026-11-03-board-4.md");
+    expect(defaultKeepPath({ id: "board-4", title: "API 설계" }, on)).toBe("docs/boards/2026-11-03-api.md");
+  });
+  it("keeps a long title's slug short", () => {
+    const path = defaultKeepPath({ id: "board-4", title: "word ".repeat(40) }, on);
+    expect(path.length).toBeLessThanOrEqual("docs/boards/2026-11-03-.md".length + 80);
+    expect(path).toMatch(/^docs\/boards\/2026-11-03-word(-word)*\.md$/);
   });
 });

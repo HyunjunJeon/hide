@@ -29,6 +29,22 @@ export type BoardBlock = {
   markdown: string;
 };
 
+/** Where the operator's keep of a board stands (`board_keep_state`). */
+export type BoardKeepState = "running" | "failed";
+
+/** Why a keep failed (`board_keep_failure`). */
+export type BoardKeepFailure = "keep_path_refused" | "keep_exists" | "keep_busy" | "keep_unknown" | "keep_failed";
+
+/** The operator's keep of a board, while one runs or after one failed. */
+export type BoardKeep = {
+  /** The path below the board's checkout it is kept at. */
+  path: string;
+  state: BoardKeepState;
+  code?: BoardKeepFailure;
+  /** The host's or the rule's words for the failure. */
+  reason?: string;
+};
+
 export type BoardView = {
   /** `board-<n>`. */
   id: string;
@@ -38,6 +54,8 @@ export type BoardView = {
   revision: number;
   updated_at_unix_ms: number;
   blocks: BoardBlock[];
+  /** The operator's keep of it, while one runs or after one failed. */
+  keep?: BoardKeep;
 };
 
 /** `rest.boards`: the boards a display of the front Workspace shows. */
@@ -57,6 +75,20 @@ export function boardOf(boards: BoardsRest | undefined, id: string | undefined):
 export function boardDisplayState(state: "open" | "opening" | "waiting" | "unavailable", board: BoardView | null): "open" | "waiting" | "unavailable" {
   if (state === "unavailable") return "unavailable";
   return state === "open" && board ? "open" : "waiting";
+}
+
+/**
+ * Where `파일로 남기기` offers to keep a board (board design, section 4):
+ * `docs/boards/<YYYY-MM-DD>-<slug>.md`, the date the operator's own, the slug
+ * the title's ASCII words in lower case joined by `-`, or the board's id when
+ * the title has none. The core checks whatever path the operator sends.
+ */
+export function defaultKeepPath(board: { id: string; title: string }, now: Date): string {
+  const two = (value: number) => String(value).padStart(2, "0");
+  const date = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+  const words = board.title.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const slug = words.join("-").slice(0, 80).replace(/-+$/, "") || board.id;
+  return `docs/boards/${date}-${slug}.md`;
 }
 
 /** The board and revision a View last drew: the web's own memory, never the core's (section 3, The edit). */

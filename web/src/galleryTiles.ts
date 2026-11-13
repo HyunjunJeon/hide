@@ -1,4 +1,4 @@
-import type { RecordView, WorkSession } from "./snapshot";
+import type { RecordBoard, RecordView, WorkSession } from "./snapshot";
 import { workKey } from "./sessionWork";
 
 /**
@@ -7,7 +7,7 @@ import { workKey } from "./sessionWork";
  * named. Only an item with a real picture is a thumbnail; every other one is
  * a compact row.
  */
-export type GalleryTile = { kind: "view"; view: RecordView } | { kind: "artifact"; name: string };
+export type GalleryTile = { kind: "view"; view: RecordView } | { kind: "board"; board: RecordBoard } | { kind: "artifact"; name: string };
 
 /** A thumbnail's picture: an image itself, or a page's capture this window already holds. */
 export type Picture = { kind: "image" } | { kind: "still"; src: string };
@@ -26,14 +26,17 @@ export function isImageView(view: RecordView): boolean {
 
 /**
  * The tiles of the record whose tree `sessions` holds, a drilled child's
- * record keeping only its own subtree's Views. The core sends the Views in
- * the order they were last looked at; the outputs follow, as the record
- * lists them.
+ * record keeping only its own subtree's Views and boards. The core sends the
+ * Views in the order they were last looked at, and the boards, open on
+ * screen or not, updated last first (board design, section 3); a board's
+ * open View is no View tile, so each board is one tile. The outputs follow,
+ * as the record lists them.
  */
-export function galleryTiles(views: readonly RecordView[], sessions: readonly WorkSession[], artifacts: readonly string[]): GalleryTile[] {
+export function galleryTiles(views: readonly RecordView[], sessions: readonly WorkSession[], artifacts: readonly string[], boards: readonly RecordBoard[] = []): GalleryTile[] {
   const keys = new Set(sessions.map(workKey));
   return [
     ...views.filter((view) => keys.has(workKey(view.session))).map((view): GalleryTile => ({ kind: "view", view })),
+    ...boards.filter((board) => keys.has(workKey(board.session))).map((board): GalleryTile => ({ kind: "board", board })),
     ...artifacts.map((name): GalleryTile => ({ kind: "artifact", name })),
   ];
 }
@@ -52,6 +55,7 @@ export function pictureOf(tile: GalleryTile, stillOf: (view: RecordView) => stri
  * checkout; a named output has none.
  */
 export function rowDetail(tile: GalleryTile): string | null {
+  if (tile.kind === "board") return tile.board.kept_path ?? null;
   if (tile.kind !== "view") return null;
   const { view } = tile;
   if (view.kind === "browser") return view.url ? view.url.replace(/^https?:\/\//i, "") : null;

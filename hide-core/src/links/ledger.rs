@@ -757,6 +757,13 @@ pub struct SessionRecordSnapshot {
     pub views: Vec<crate::model::RecordViewSnapshot>,
     /// The Views past that cap, counted so the gallery's `+N` stays exact.
     pub views_omitted: usize,
+    /// The boards the record's session and its descendants drew that are
+    /// open or kept, whether or not a View shows them, updated last first,
+    /// at most `RECORD_VIEWS` (board design, section 3): the gallery's tiles
+    /// that open a board again. Kept with the board book; the ledger never
+    /// reads them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub boards: Vec<crate::model::RecordBoardSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

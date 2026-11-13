@@ -4,11 +4,14 @@
 // hands in the board, its state, the opener's mark, the head's controls and
 // Close view, so the gallery draws exactly what the app draws.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AreaEmpty } from "./AreaEmpty";
-import { changedBlocks, calloutBody, quoteBody, quoteCaption, type BoardBlock, type BoardCalloutTone, type BoardView as Board, type DrawnBoard } from "./boards";
+import { changedBlocks, calloutBody, quoteBody, quoteCaption, type BoardBlock, type BoardCalloutTone, type BoardKeepFailure, type BoardView as Board, type DrawnBoard } from "./boards";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./components/ui/alert-dialog";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
 import { Separator } from "./components/ui/separator";
 import { Hint } from "./components/ui/tooltip";
 import { useElapsed } from "./components/elapsed";
@@ -39,6 +42,7 @@ export function BoardView({
   label,
   opener,
   controls,
+  notice,
   onCloseView,
   markMs = BOARD_CHANGE_MARK_MS,
 }: {
@@ -51,15 +55,21 @@ export function BoardView({
   opener?: ReactNode;
   /** The head's controls (`파일로 남기기`, `지우기`), before the opener's mark. */
   controls?: ReactNode;
+  /** A line under the head while the board is open, such as why a keep failed. */
+  notice?: ReactNode;
   onCloseView: () => void;
   markMs?: number;
 }) {
   const { t } = useInterfaceTranslation();
   const marked = useChangeMark(state === "open" ? board : null, markMs);
   const shown = state === "open" && board ? board : null;
+  // Only an open board is the operator's to keep or delete; a kept one is
+  // read-only until its View becomes its file's.
+  const editable = shown?.state === "open";
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-board-view={board?.id ?? ""} data-board-state={shown ? "open" : state}>
-      <BoardHead title={shown?.title ?? board?.title ?? label} updatedAt={shown?.updated_at_unix_ms ?? null} controls={shown ? controls : null} opener={opener} />
+      <BoardHead title={shown?.title ?? board?.title ?? label} updatedAt={shown?.updated_at_unix_ms ?? null} controls={editable ? controls : null} opener={opener} />
+      {editable ? notice : null}
       {shown ? (
         <div className="min-h-0 flex-1 overflow-y-auto" data-board-body="true">
           <article aria-label={shown.title} className="flex min-w-0 flex-col gap-lg px-lg py-lg text-body text-foreground">
@@ -109,6 +119,81 @@ function useChangeMark(board: Board | null, markMs: number): ReadonlySet<string>
     return () => window.clearTimeout(timer);
   }, [mark]);
   return mark?.ids ?? NONE;
+}
+
+/**
+ * The head's two actions on an open board (board design, section 4): keep it
+ * as a file, through a popover whose path field holds `defaultPath` first,
+ * and delete it, confirmed once since nothing brings it back. Both rest while
+ * a keep runs.
+ */
+export function BoardControls({ board, defaultPath, onKeep, onDelete, opened }: {
+  board: Board;
+  defaultPath: string;
+  onKeep: (path: string) => void;
+  onDelete: () => void;
+  /** Draws one layer open from the start, for the gallery. */
+  opened?: "keep" | "delete";
+}) {
+  const { t } = useInterfaceTranslation();
+  const field = useId();
+  const keeping = board.keep?.state === "running";
+  const [open, setOpen] = useState(opened === "keep");
+  const [path, setPath] = useState(board.keep?.path ?? defaultPath);
+  const keep = () => {
+    const chosen = path.trim();
+    if (!chosen) return;
+    onKeep(chosen);
+    setOpen(false);
+  };
+  return (
+    <>
+      <Popover open={open} onOpenChange={(next) => { if (next) setPath(board.keep?.path ?? defaultPath); setOpen(next); }}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="sm" disabled={keeping} data-board-keep="true">{keeping ? t("boardView.keeping") : t("boardView.keep")}</Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="flex flex-col gap-xs" data-board-keep-popover="true">
+          <form className="flex flex-col gap-xs" onSubmit={(event) => { event.preventDefault(); keep(); }}>
+            <label htmlFor={field} className="text-caption text-subtle-foreground">{t("boardView.keepWhere")}</label>
+            <Input id={field} mono value={path} spellCheck={false} autoComplete="off" onChange={(event) => setPath(event.target.value)} data-board-keep-path="true" />
+            <p className="text-micro text-muted-foreground">{t("boardView.keepNote")}</p>
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" disabled={!path.trim()} data-board-keep-confirm="true">{t("boardView.keepConfirm")}</Button>
+            </div>
+          </form>
+        </PopoverContent>
+      </Popover>
+      <AlertDialog defaultOpen={opened === "delete"}>
+        <AlertDialogTrigger asChild>
+          <Button variant="ghost" size="sm" disabled={keeping} data-board-delete="true">{t("boardView.delete")}</Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("boardView.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("boardView.deleteBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("boardView.deleteCancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={onDelete} data-board-delete-confirm="true">{t("boardView.delete")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+/** Why the last keep failed, with the path it was for and the keep again. */
+export function BoardKeepNotice({ code, path, onRetry }: { code: BoardKeepFailure; path: string; onRetry: () => void }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-sm border-b border-border px-md py-xs text-caption" role="status" data-board-keep-failed={code}>
+      <span className="min-w-0 flex-1 truncate text-warning">{t(`boardView.keepFailed.${code}`)}</span>
+      <Hint label={path} reveals>
+        <span className="min-w-0 shrink truncate font-mono text-muted-foreground">{path}</span>
+      </Hint>
+      <Button variant="text" size="inline" onClick={onRetry} data-board-keep-retry="true">{t("common.retry")}</Button>
+    </div>
+  );
 }
 
 function BoardHead({ title, updatedAt, controls, opener }: { title: string; updatedAt: number | null; controls: ReactNode; opener: ReactNode }) {

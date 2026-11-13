@@ -1353,49 +1353,6 @@ fn the_front_workspaces_boards_ride_the_wire_and_move_only_with_an_accepted_chan
 }
 
 #[test]
-fn a_board_the_agent_deleted_leaves_its_view_unavailable() {
-    let root = tempfile::tempdir().unwrap();
-    let runtime = on_screen(root.path(), false);
-    let mut guard = runtime.lock().unwrap();
-    let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
-    ok(
-        &mut guard,
-        &recipient(),
-        json!({"verb": "delete", "board": "board-1"}),
-    );
-    // The front strip is the agent's, which shows the View it opened.
-    keyboard(&mut guard, Some("recipient"));
-    guard.snapshot_delta_payload(0);
-    let layout = &guard.snapshot.workspace_view.as_ref().unwrap().layout;
-    let display = super::view_areas::areas(layout)
-        .into_iter()
-        .flat_map(|(_, _, displays)| displays)
-        .find(|display| display.id == view)
-        .unwrap();
-    assert_eq!(
-        (display.state, display.reason.as_deref(), display.kind),
-        (
-            crate::model::ViewDisplayState::Unavailable,
-            Some(crate::boards::DELETED_REASON),
-            DisplayKind::Board
-        )
-    );
-    assert_eq!(display.board.as_deref(), Some("board-1"));
-    assert_eq!(
-        code(
-            &run(
-                &mut guard,
-                &recipient(),
-                json!({"verb": "open", "board": "board-1"})
-            )
-            .unwrap_err()
-        )
-        .0,
-        "board_deleted"
-    );
-}
-
-#[test]
 fn a_mission_keeps_nothing_of_a_board_view() {
     let mut layout = crate::view_layout::Layout::default();
     let display = layout.new_board_display("board-1", "Login flow");
@@ -1679,4 +1636,634 @@ fn a_view_opened_or_closed_with_no_window_reading_is_kept_for_a_restart() {
     assert_eq!(back, [(area, Some("board-1".to_owned()), true)]);
     assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
     let _ = kept;
+}
+
+// The operator keeps, deletes and opens a board again (board design, section
+// 4, node `keep`).
+
+use crate::node_access::{LinkAnswer, LinkError, NodeLink};
+use hide_node_link::protocol::Call;
+use std::collections::VecDeque;
+
+/// What the host does with the next save it is sent.
+#[derive(Clone, Copy, Debug)]
+enum SaveFault {
+    /// The host refuses it; nothing is written.
+    Refused,
+    /// The host is at its limit; nothing is sent.
+    Busy,
+    /// The connection ends before the write reaches the file.
+    LoseBefore,
+    /// The write lands and its answer is lost.
+    LoseAfter,
+}
+
+/// This machine's host for the fixture's checkout, `/checkouts/fixture`,
+/// kept in a folder of its own: every call goes to the real local host with
+/// the checkout's path put on that folder, so a keep's folders and file are
+/// real, and the next saves can be refused, met by a full host or lose their
+/// answer.
+struct KeepHost {
+    folder: std::path::PathBuf,
+    faults: Mutex<VecDeque<SaveFault>>,
+    pins: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
+}
+
+impl KeepHost {
+    fn on(runtime: &mut Runtime, folder: &std::path::Path) -> Arc<Self> {
+        let host = Arc::new(Self {
+            folder: folder.canonicalize().unwrap(),
+            faults: Mutex::new(VecDeque::new()),
+            pins: Mutex::new(HashMap::new()),
+        });
+        runtime.use_own_node(host.clone());
+        host
+    }
+
+    fn fail_next_save(&self, fault: SaveFault) {
+        self.faults.lock().unwrap().push_back(fault);
+    }
+}
+
+impl NodeLink for KeepHost {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let folder = hide_platform::path::to_wire(&self.folder).unwrap();
+        let text = serde_json::to_string(&call)
+            .unwrap()
+            .replace("\"/checkouts/fixture", &format!("\"{folder}"));
+        let call: Call = serde_json::from_str(&text).unwrap();
+        let local = hide_node::Local::of_process();
+        if matches!(call, Call::Save { .. })
+            && let Some(fault) = self.faults.lock().unwrap().pop_front()
+        {
+            let lost =
+                || LinkError::Unknown("The connection ended before the host answered".into());
+            return Err(match fault {
+                SaveFault::Refused => LinkError::Refused(hide_node_link::HostError::new(
+                    hide_node_link::ErrorCode::Io,
+                    "No space left on the volume",
+                )),
+                SaveFault::Busy => LinkError::Busy,
+                SaveFault::LoseBefore => lost(),
+                SaveFault::LoseAfter => {
+                    let _ = local.call(call, timeout);
+                    lost()
+                }
+            });
+        }
+        local.call(call, timeout)
+    }
+
+    fn pinned(&self, root: &str) -> Option<hide_node_link::RootIdentity> {
+        self.pins.lock().unwrap().get(root).copied()
+    }
+
+    fn pin(&self, root: &str, identity: Option<hide_node_link::RootIdentity>) {
+        let mut pins = self.pins.lock().unwrap();
+        match identity {
+            Some(identity) => pins.insert(root.to_owned(), identity),
+            None => pins.remove(root),
+        };
+    }
+}
+
+/// The fixture on screen with its checkout in `folder` and its workers
+/// running, so a keep writes off the lock as it does in Hide.
+fn keeping(
+    root: &std::path::Path,
+    folder: &std::path::Path,
+) -> (Arc<Mutex<Runtime>>, Arc<KeepHost>) {
+    let runtime = on_screen(root, false);
+    let host = {
+        let mut guard = runtime.lock().unwrap();
+        let host = KeepHost::on(&mut guard, folder);
+        guard.install_worker_context(
+            Arc::downgrade(&runtime),
+            crate::handle::ChangeNotifier::noop(),
+        );
+        host
+    };
+    (runtime, host)
+}
+
+/// A client event as the page sends it.
+fn send(runtime: &Arc<Mutex<Runtime>>, kind: &str, payload: Value) {
+    let event = json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload});
+    runtime
+        .lock()
+        .unwrap()
+        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+}
+
+/// Where board `id`'s keep stands: running, its failure's code, or none.
+fn keep_of(runtime: &Runtime, id: &str) -> Option<(String, Option<String>)> {
+    runtime.boards.keeps.get(id).map(|keep| {
+        let code = keep.code.map(|code| {
+            serde_json::to_value(code)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        });
+        (format!("{:?}", keep.state), code)
+    })
+}
+
+/// Waits until board `id`'s keep has ended, and answers its failure's code,
+/// or none when it was kept.
+fn keep_ended(runtime: &Arc<Mutex<Runtime>>, id: &str) -> Option<String> {
+    wait(runtime, &format!("{id}'s keep to end"), |runtime| {
+        !runtime
+            .boards
+            .keeps
+            .get(id)
+            .is_some_and(|keep| keep.state == crate::runtime::boards::KeepState::Running)
+    });
+    let guard = runtime.lock().unwrap();
+    match keep_of(&guard, id) {
+        Some((_, code)) => code,
+        None => {
+            assert_eq!(guard.boards.get(id).unwrap().state.name(), "kept");
+            None
+        }
+    }
+}
+
+const KEPT_AT: &str = "docs/boards/2026-11-13-login-flow.md";
+
+#[test]
+fn keep_writes_the_export_into_a_new_file_making_its_folders_and_its_view_becomes_the_file() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    let view = {
+        let mut guard = runtime.lock().unwrap();
+        let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+        guard.sync_workspace_view();
+        view
+    };
+    let (area, index) = {
+        let guard = runtime.lock().unwrap();
+        let layout = guard.view_layout_of(&key()).unwrap();
+        let area = layout.area_of(&view).unwrap();
+        (
+            area.id.clone(),
+            area.displays
+                .iter()
+                .position(|display| display.id == view)
+                .unwrap(),
+        )
+    };
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    // The folders were made and the file holds the export, nothing else.
+    let file = folder.path().join(KEPT_AT);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), export);
+
+    // The same place shows the file now: the operator's own, seen, with no
+    // agent's mark, and nothing waits in Needs You for the board.
+    let path = format!("/checkouts/fixture/{KEPT_AT}");
+    wait(
+        &runtime,
+        "the board's View to become its file's",
+        |runtime| {
+            runtime
+                .view_layout_of(&key())
+                .and_then(|layout| layout.display(&view))
+                .is_some_and(|display| display.kind == DisplayKind::File)
+        },
+    );
+    {
+        let guard = runtime.lock().unwrap();
+        let layout = guard.view_layout_of(&key()).unwrap();
+        let display = layout.display(&view).unwrap();
+        assert_eq!(
+            (
+                display.path.as_str(),
+                display.board.as_deref(),
+                display.opener.is_some(),
+                display.unseen.is_some()
+            ),
+            (path.as_str(), None, false, false)
+        );
+        let area_now = layout.area_of(&view).unwrap();
+        assert_eq!(
+            (
+                area_now.id.as_str(),
+                area_now
+                    .displays
+                    .iter()
+                    .position(|display| display.id == view)
+            ),
+            (area.as_str(), Some(index))
+        );
+        assert!(board_views(&guard).is_empty());
+        assert!(row(&guard, "recipient").look.is_none());
+    }
+
+    // The board is read-only now: the agent's next change names the file.
+    let refusal = run(
+        &mut runtime.lock().unwrap(),
+        &recipient(),
+        json!({"verb": "edit", "board": "board-1", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": "Second text"}},
+        ]}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        code(&refusal),
+        ("board_kept", Some(&*format!("its file is {KEPT_AT}")))
+    );
+    // Git is not touched: the checkout is no repository, and stays none.
+    assert!(!folder.path().join(".git").exists());
+}
+
+#[test]
+fn keep_refuses_a_path_outside_its_rule_and_a_file_that_already_holds_something() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    ok(&mut runtime.lock().unwrap(), &recipient(), login_flow());
+
+    for path in [
+        "../outside.md",
+        "docs/.hidden/a.md",
+        "docs/a.txt",
+        "/etc/a.md",
+    ] {
+        send(
+            &runtime,
+            "board_keep",
+            json!({"board": "board-1", "path": path}),
+        );
+        assert_eq!(
+            keep_ended(&runtime, "board-1").as_deref(),
+            Some("keep_path_refused"),
+            "{path}"
+        );
+    }
+    assert!(
+        !folder.path().join("docs").exists(),
+        "a refused path makes no folder"
+    );
+    assert!(!folder.path().parent().unwrap().join("outside.md").exists());
+
+    std::fs::create_dir_all(folder.path().join("docs")).unwrap();
+    std::fs::write(
+        folder.path().join("docs/taken.md"),
+        "the operator's notes\n",
+    )
+    .unwrap();
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": "docs/taken.md"}),
+    );
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_exists")
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("docs/taken.md")).unwrap(),
+        "the operator's notes\n"
+    );
+    let guard = runtime.lock().unwrap();
+    assert_eq!(guard.boards.get("board-1").unwrap().state.name(), "open");
+    // The head shows the failure, on the wire with the board.
+    drop(guard);
+    let mut guard = runtime.lock().unwrap();
+    let boards = rest_boards(&mut guard);
+    let keep = boards.items[0].keep.as_ref().unwrap();
+    assert_eq!(
+        (keep.path.as_str(), keep.state, keep.code),
+        (
+            "docs/taken.md",
+            crate::runtime::boards::KeepState::Failed,
+            Some(crate::runtime::boards::KeepFailure::KeepExists)
+        )
+    );
+}
+
+#[test]
+fn after_a_failed_save_keep_writes_only_into_the_empty_file_left_behind() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, host) = keeping(root.path(), folder.path());
+    ok(&mut runtime.lock().unwrap(), &recipient(), login_flow());
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+    let file = folder.path().join(KEPT_AT);
+    let keep = || {
+        send(
+            &runtime,
+            "board_keep",
+            json!({"board": "board-1", "path": KEPT_AT}),
+        )
+    };
+
+    // The save is refused: the file was made and stays empty, and the board
+    // stays open.
+    host.fail_next_save(SaveFault::Refused);
+    keep();
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_failed")
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+    // A full host and an answer lost before the write leave it empty too;
+    // the second is read back, never sent again.
+    host.fail_next_save(SaveFault::Busy);
+    keep();
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_busy")
+    );
+    host.fail_next_save(SaveFault::LoseBefore);
+    keep();
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_failed")
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+    assert_eq!(
+        runtime.lock().unwrap().boards.keeps["board-1"]
+            .reason
+            .as_deref()
+            .map(|reason| reason.contains("still empty")),
+        Some(true)
+    );
+
+    // Someone writes into the empty file meanwhile: the retry never writes
+    // over it.
+    std::fs::write(&file, "written by hand\n").unwrap();
+    keep();
+    assert_eq!(
+        keep_ended(&runtime, "board-1").as_deref(),
+        Some("keep_exists")
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "written by hand\n");
+
+    // Emptied again, the retry writes into it.
+    std::fs::write(&file, "").unwrap();
+    keep();
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), export);
+}
+
+#[test]
+fn a_save_whose_answer_was_lost_after_it_landed_is_read_back_as_kept() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, host) = keeping(root.path(), folder.path());
+    ok(&mut runtime.lock().unwrap(), &recipient(), login_flow());
+    host.fail_next_save(SaveFault::LoseAfter);
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(KEPT_AT)).unwrap(),
+        export
+    );
+}
+
+/// The operator's open board deleted, by them or by its agent: a deleted
+/// board asks the operator to look at nothing, whether or not it was seen.
+#[test]
+fn a_deleted_board_closes_its_view_and_leaves_no_row_waiting() {
+    for operator in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = on_screen(root.path(), false);
+        let view = view_of(&ok(
+            &mut runtime.lock().unwrap(),
+            &recipient(),
+            login_flow(),
+        ));
+        {
+            let guard = runtime.lock().unwrap();
+            assert!(unseen(&guard, &view));
+            assert_eq!(row(&guard, "recipient").mark, RowMark::Look);
+        }
+        if operator {
+            send(&runtime, "board_delete", json!({"board": "board-1"}));
+        } else {
+            ok(
+                &mut runtime.lock().unwrap(),
+                &recipient(),
+                json!({"verb": "delete", "board": "board-1"}),
+            );
+        }
+        let mut guard = runtime.lock().unwrap();
+        assert!(board_views(&guard).is_empty(), "operator: {operator}");
+        let agent = row(&guard, "recipient");
+        assert!(agent.look.is_none(), "operator: {operator}");
+        assert_ne!(agent.mark, RowMark::Look, "operator: {operator}");
+        let stub = guard.boards.get("board-1").unwrap();
+        assert_eq!(
+            serde_json::to_value(&stub.state).unwrap()["deleted_by"],
+            if operator { "operator" } else { "agent" }
+        );
+        // The agent learns it was deleted, not that it was never drawn.
+        let refusal = run(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "edit", "board": "board-1", "edits": [
+                {"op": "update", "id": "b1", "changes": {"text": "Second text"}},
+            ]}),
+        )
+        .unwrap_err();
+        assert_eq!(code(&refusal).0, "board_deleted");
+        let refusal = run(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "open", "board": "board-1"}),
+        )
+        .unwrap_err();
+        assert_eq!(code(&refusal).0, "board_deleted");
+        assert!(rest_boards(&mut guard).items.is_empty());
+    }
+}
+
+/// A board shown in a checkout that is not its own (a Conductor's, opened
+/// from its worker's worktree) closes there too when the worker deletes it.
+#[test]
+fn a_deleted_board_closes_its_view_in_every_checkout_that_shows_it() {
+    let root = tempfile::tempdir().unwrap();
+    {
+        let runtime = on_screen(root.path(), true);
+        let mut guard = runtime.lock().unwrap();
+        let mut draw = login_flow();
+        draw["no_open"] = json!(true);
+        ok(&mut guard, &recipient(), draw);
+        saved(root.path(), "board-1", 1);
+    }
+    let file = hide_kit::layout::board_file(&boards_dir(root.path()), "board-1");
+    let mut board: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    board["checkout"]["path"] = json!("/checkouts/worker");
+    std::fs::write(&file, serde_json::to_vec(&board).unwrap()).unwrap();
+
+    let runtime = on_screen(root.path(), true);
+    let mut guard = runtime.lock().unwrap();
+    keyboard(&mut guard, None);
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    ledger
+        .agents
+        .push(registration("agent-1", "sender", "native-sender", None));
+    ledger.agents.push(registration(
+        "agent-2",
+        "recipient",
+        "native-recipient",
+        Some("agent-1"),
+    ));
+    guard.delivery_ledger = Ok(Arc::new(ledger));
+    let conductor = Actor {
+        pane_id: "sender".into(),
+        name: "sender".into(),
+        kind: "codex".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        session: Some("sender-session".into()),
+    };
+    ok(
+        &mut guard,
+        &conductor,
+        json!({"verb": "open", "board": "board-1"}),
+    );
+    assert_eq!(board_views(&guard).len(), 1);
+    assert_eq!(row(&guard, "sender").mark, RowMark::Look);
+
+    ok(
+        &mut guard,
+        &recipient(),
+        json!({"verb": "delete", "board": "board-1"}),
+    );
+    assert!(board_views(&guard).is_empty());
+    assert!(row(&guard, "sender").look.is_none());
+}
+
+/// The fixture's session record, of the agent that draws the boards.
+fn record_of_recipient(runtime: &mut Runtime) {
+    let session = caller_session_of(runtime, "recipient");
+    let record = crate::links::ledger::SessionRecord {
+        session: session.clone(),
+        ..Default::default()
+    };
+    runtime.snapshot.session_record = Some(Arc::new(crate::links::ledger::SessionRecordSnapshot {
+        session: Some(session),
+        record: Some(record),
+        ..Default::default()
+    }));
+    runtime.settle_record_views();
+}
+
+fn record_boards(runtime: &Runtime) -> Vec<(String, &'static str)> {
+    runtime
+        .snapshot
+        .session_record
+        .as_ref()
+        .unwrap()
+        .boards
+        .iter()
+        .map(|board| (board.id.clone(), board.state))
+        .collect()
+}
+
+#[test]
+fn a_closed_board_is_listed_in_its_session_record_and_opened_again_as_the_operators_own() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    {
+        let mut guard = runtime.lock().unwrap();
+        record_of_recipient(&mut guard);
+        let view = view_of(&ok(&mut guard, &recipient(), login_flow()));
+        let mut gone = login_flow();
+        gone["title"] = json!("Gone");
+        ok(&mut guard, &recipient(), gone);
+        ok(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "delete", "board": "board-2"}),
+        );
+        assert!(super::view_areas::act(
+            &mut guard,
+            json!({"action": "close", "display_id": view}),
+        ));
+        assert!(board_views(&guard).is_empty());
+        // The open board is listed though no View shows it; the deleted one
+        // is not.
+        assert_eq!(record_boards(&guard), [("board-1".to_owned(), "open")]);
+    }
+
+    send(&runtime, "board_open", json!({"board": "board-1"}));
+    let guard = runtime.lock().unwrap();
+    let views = board_views(&guard);
+    assert_eq!(views.len(), 1);
+    let layout = guard.view_layout_of(&key()).unwrap();
+    let display = layout.display(&views[0].0).unwrap();
+    assert_eq!(
+        (
+            display
+                .opener
+                .as_ref()
+                .map(|opener| opener.terminal_id.as_str()),
+            display.operator,
+            display.unseen.is_some()
+        ),
+        (Some("term-recipient"), true, false),
+        "the operator's own open, seen, wearing the drawing agent's mark"
+    );
+    let area = layout.area_of(&views[0].0).unwrap();
+    assert_eq!(area.active.as_deref(), Some(views[0].0.as_str()));
+    assert!(row(&guard, "recipient").look.is_none());
+}
+
+#[test]
+fn a_kept_board_stays_in_its_session_record_as_its_file() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    {
+        let mut guard = runtime.lock().unwrap();
+        record_of_recipient(&mut guard);
+        ok(&mut guard, &recipient(), login_flow());
+    }
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    let guard = runtime.lock().unwrap();
+    let held = guard.snapshot.session_record.as_ref().unwrap();
+    let tile = &held.boards[0];
+    assert_eq!(
+        (
+            tile.id.as_str(),
+            tile.state,
+            tile.kept_path.as_deref(),
+            tile.checkout_path.as_str()
+        ),
+        ("board-1", "kept", Some(KEPT_AT), "/checkouts/fixture")
+    );
+    // Opening a kept board is opening its file; the board itself opens no more.
+    drop(guard);
+    send(&runtime, "board_open", json!({"board": "board-1"}));
+    assert!(board_views(&runtime.lock().unwrap()).is_empty());
+}
+
+/// The native session of the agent in `pane`, as a board's owner names it.
+fn caller_session_of(runtime: &Runtime, pane: &str) -> crate::links::ledger::SessionIdentity {
+    runtime
+        .live_sessions()
+        .into_iter()
+        .find(|(held, _)| held == pane)
+        .map(|(_, session)| session)
+        .unwrap()
 }

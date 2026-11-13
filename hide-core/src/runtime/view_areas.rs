@@ -1258,10 +1258,18 @@ impl Runtime {
             return self.place_beside(key, &base, tab_id, &path, kind, committed);
         }
         if let Some(id) = replace {
-            // The read belongs to the empty tab captured at open. A close or
+            // The read belongs to the empty tab captured at open, or to the
+            // board kept as this file (`show_kept_file`). A close or
             // navigation meanwhile must never overwrite the operator's newer work.
+            let kept_board = self
+                .view_layout_of(key)
+                .and_then(|layout| layout.display(id))
+                .and_then(|display| display.board.clone())
+                .filter(|board| self.board_kept_at(board, key, &path));
             let placed = self.change_view_layout(key, |layout, stamp| {
-                if !layout.display(id).is_some_and(Display::is_new_tab) {
+                if !layout.display(id).is_some_and(|display| {
+                    display.is_new_tab() || (kept_board.is_some() && display.board == kept_board)
+                }) {
                     return Err(LayoutError::UnknownDisplay(id.to_owned()));
                 }
                 let area_id = layout
@@ -1289,6 +1297,7 @@ impl Runtime {
                     (kind == DisplayKind::Diff).then_some(committed.unwrap_or(false));
                 display.url = None;
                 display.title = None;
+                display.board = None;
                 display.load = 0;
                 display.preview = false;
                 display.forget_openers();
@@ -1296,6 +1305,10 @@ impl Runtime {
                 Ok(((), true))
             });
             placed?;
+            // A kept board's View that waited to be looked at waits no more.
+            if kept_board.is_some() {
+                self.refresh_unseen_rows();
+            }
             return Ok(true);
         }
         if self.focus_view_document(key, &path, kind, committed, !preview)? {

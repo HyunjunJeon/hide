@@ -1,10 +1,12 @@
 import { expect, it } from "vitest";
-import { galleryTiles, pictureOf, rowDetail } from "./galleryTiles";
-import type { RecordView, WorkSession } from "./snapshot";
+import { galleryTiles, pictureOf, rowDetail, type GalleryTile } from "./galleryTiles";
+import type { RecordBoard, RecordView, WorkSession } from "./snapshot";
 
 const ROOT: WorkSession = { device_id: "local", agent: "claude", session_id: "root" };
 const CHILD: WorkSession = { device_id: "local", agent: "codex", session_id: "child" };
 const OTHER: WorkSession = { device_id: "local", agent: "claude", session_id: "other" };
+/** A tile's name in a test's list: a View's id, a board's id or an output's name. */
+const named = (tile: GalleryTile) => (tile.kind === "view" ? tile.view.display_id : tile.kind === "board" ? tile.board.id : tile.name);
 const view = (id: string, patch: Partial<RecordView> = {}): RecordView => ({ device_id: "local", checkout_path: "/c", display_id: id, kind: "file", label: id, path: `/c/${id}`, session: ROOT, ...patch });
 
 it("gives a thumbnail only to an image and a page this window holds a capture of; everything else is a row (D-40)", () => {
@@ -32,7 +34,17 @@ it("details a row by a document's first heading, a page's address or where a fil
 it("keeps the shown record's subtree's Views in the core's order, then its named outputs (D-40)", () => {
   const views = [view("child", { session: CHILD }), view("root"), view("stranger", { session: OTHER })];
   const tiles = galleryTiles(views, [ROOT, CHILD], ["Release notes"]);
-  expect(tiles.map((tile) => (tile.kind === "view" ? tile.view.display_id : tile.name))).toEqual(["child", "root", "Release notes"]);
+  expect(tiles.map(named)).toEqual(["child", "root", "Release notes"]);
   // A drilled child's record shows only its own.
-  expect(galleryTiles(views, [CHILD], []).map((tile) => (tile.kind === "view" ? tile.view.display_id : tile.name))).toEqual(["child"]);
+  expect(galleryTiles(views, [CHILD], []).map(named)).toEqual(["child"]);
+});
+
+it("lists the tree's boards, open on screen or not, as rows after its Views; a kept one is detailed by its file", () => {
+  const board = (id: string, patch: Partial<RecordBoard> = {}): RecordBoard => ({ id, title: id, state: "open", device_id: "local", checkout_path: "/c", updated_at_unix_ms: 0, session: ROOT, ...patch });
+  const tiles = galleryTiles([view("a.md")], [ROOT, CHILD], ["Release notes"], [board("board-1"), board("board-2", { session: CHILD, state: "kept", kept_path: "docs/boards/x.md" }), board("board-3", { session: OTHER })]);
+  expect(tiles.map(named)).toEqual(["a.md", "board-1", "board-2", "Release notes"]);
+  expect(tiles.map((tile) => pictureOf(tile, () => "blob:still"))).toEqual([null, null, null, null]);
+  const [, open, kept] = tiles;
+  expect(open && rowDetail(open)).toBeNull();
+  expect(kept && rowDetail(kept)).toBe("docs/boards/x.md");
 });

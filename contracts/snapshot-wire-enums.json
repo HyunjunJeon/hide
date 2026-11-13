@@ -40,6 +40,8 @@
   "board_block_kind": ["section", "callout", "table", "code", "quote", "diagram", "divider"],
   "board_callout_tone": ["info", "decision", "risk"],
   "board_state": ["open", "kept", "deleted"],
+  "board_keep_state": ["running", "failed"],
+  "board_keep_failure": ["keep_path_refused", "keep_exists", "keep_busy", "keep_unknown", "keep_failed"],
   "detail_item_kind": ["pull_request", "record", "mission", "worktrees", "cost", "remains", "plan", "branch"],
   "agent_onboarding": ["pending", "done"],
   "agent_wait": ["children", "background", "reply", "checks"],

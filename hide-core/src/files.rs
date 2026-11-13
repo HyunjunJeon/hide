@@ -302,6 +302,133 @@ pub fn revision_now(
     }
 }
 
+/// What writing a new file came to (`write_new_file`).
+#[derive(Debug, PartialEq)]
+pub enum NewFileOutcome {
+    /// The file holds the contents now.
+    Written,
+    /// Something else is at the path; nothing was written over it.
+    Exists(String),
+    /// The checkout's host was at its limit; the write did not run.
+    Busy(String),
+    /// The save was sent, its answer was lost and the file could not be read
+    /// back: whether it landed is not known. A retry reads the file first.
+    Unknown(String),
+    Failed(String),
+}
+
+/// Writes `contents` into a new file at `relative` in `root`, on the machine
+/// that holds the checkout: each missing folder is made, the file is made
+/// empty, and the contents are saved against the empty file's revision, so
+/// the write lands only in a file that is new or still empty. An empty file
+/// left by an earlier attempt is written into; one that already holds
+/// exactly `contents` is the earlier attempt landed; anything else is
+/// refused. A save whose answer was lost is read back once, never sent
+/// again. Blocks on the channel.
+pub fn write_new_file(
+    channel: &dyn NodeLink,
+    root: &DocumentRoot,
+    relative: &RelPath,
+    contents: &str,
+) -> NewFileOutcome {
+    let failed = |error: LinkError| match error {
+        LinkError::Busy => NewFileOutcome::Busy(error.to_string()),
+        LinkError::Refused(error) if error.code == ErrorCode::Busy => {
+            NewFileOutcome::Busy(error.message)
+        }
+        LinkError::Refused(error) => NewFileOutcome::Failed(error.message),
+        LinkError::NotConnected(reason) => {
+            NewFileOutcome::Failed(format!("{reason}; nothing was written"))
+        }
+        LinkError::Unknown(reason) => NewFileOutcome::Unknown(reason),
+    };
+    let root_ref = match root_ref(channel, root) {
+        Ok(root_ref) => root_ref,
+        Err(error) => return failed(error),
+    };
+    let Some((name, folders)) = relative
+        .as_str()
+        .split('/')
+        .collect::<Vec<_>>()
+        .split_last()
+        .map(|(name, folders)| (name.to_string(), folders.to_vec()))
+    else {
+        return NewFileOutcome::Failed("The path names no file".into());
+    };
+    let create = |parent: &RelPath, name: &str, directory: bool| match call_as::<
+        hide_node_link::mutate::Changed,
+    >(
+        channel,
+        Call::Create {
+            root: root_ref.clone(),
+            parent: parent.to_string(),
+            name: name.to_owned(),
+            directory,
+        },
+        CHANGE_TIMEOUT,
+    ) {
+        Ok(_) => Ok(true),
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    };
+    let mut parent = RelPath::root();
+    for folder in folders {
+        if let Err(error) = create(&parent, folder, true) {
+            return failed(error);
+        }
+        parent = match parent.join(folder) {
+            Ok(joined) => joined,
+            Err(error) => return NewFileOutcome::Failed(error.to_string()),
+        };
+    }
+    let place = DocumentPlace {
+        device_id: root.device_id.clone(),
+        root: root_ref.clone(),
+        relative: relative.clone(),
+    };
+    let empty = hide_node_link::document::revision_of(b"");
+    let written = hide_node_link::document::revision_of(contents.as_bytes());
+    let taken = || NewFileOutcome::Exists(format!("{relative} already holds something else"));
+    let expected = match create(&parent, &name, false) {
+        Ok(true) => empty.clone(),
+        Ok(false) => match revision_now(channel, &place) {
+            Ok(Some(revision)) if revision == written => return NewFileOutcome::Written,
+            Ok(Some(revision)) if revision == empty => revision,
+            Ok(_) => return taken(),
+            Err(LinkError::Refused(_)) => return taken(),
+            Err(error) => return failed(error),
+        },
+        Err(error) => return failed(error),
+    };
+    let saved = call_as::<Saved>(
+        channel,
+        Call::Save {
+            root: root_ref,
+            path: relative.to_string(),
+            contents: contents.to_owned(),
+            expected_revision: expected,
+        },
+        SAVE_TIMEOUT,
+    );
+    match saved {
+        Ok(_) => NewFileOutcome::Written,
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::Conflict => taken(),
+        // The answer was lost: the file says whether the save landed.
+        Err(LinkError::Unknown(reason)) => match revision_now(channel, &place) {
+            Ok(Some(revision)) if revision == written => NewFileOutcome::Written,
+            Ok(Some(revision)) if revision == empty => NewFileOutcome::Failed(format!(
+                "{reason}; the file was read back still empty, so nothing was written yet"
+            )),
+            Ok(Some(_)) => taken(),
+            Ok(None) => NewFileOutcome::Failed(format!(
+                "{reason}; the file is no longer there, so nothing was written"
+            )),
+            Err(_) => NewFileOutcome::Unknown(reason),
+        },
+        Err(error) => failed(error),
+    }
+}
+
 /// One change the explorer asks the filesystem for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExplorerOperationKind {

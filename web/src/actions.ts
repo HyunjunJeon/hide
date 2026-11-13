@@ -3400,6 +3400,49 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
     },
 
     /**
+     * A board's tile in the session record (board design, section 3): an open
+     * board's View comes back, or forward, in its own checkout as the
+     * operator's own open (`board_open`), and a kept board opens its file;
+     * either way that checkout's documents come in front.
+     */
+    openRecordBoard(board: import("./snapshot").RecordBoard) {
+      const project = catalogWorkspaces(rest()).find((row) => row.device_id === board.device_id && row.checkouts.some((checkout) => checkout.path === board.checkout_path));
+      const checkout = project?.checkouts.find((row) => row.path === board.checkout_path);
+      if (!project || !checkout) return diagnostic(`record board: ${board.checkout_path} is no longer open on ${board.device_id}`);
+      const front = frontViewWorkspace();
+      const state = ui();
+      const inFront = !state.overviewOpen && state.screen?.kind !== "main" && state.screen?.kind !== "desk" && state.screen?.kind !== "missions" && front?.device_id === board.device_id && front.path === board.checkout_path;
+      const node = localDeviceId(rest());
+      const device = deviceField(board.device_id, node);
+      if (board.state === "kept" && board.kept_path) {
+        const path = `${board.checkout_path.replace(/\/+$/, "")}/${board.kept_path}`;
+        if (inFront) {
+          showDocuments();
+          followOpen(path, "file");
+          dispatch({ schema_version: 2, kind: "file_open", payload: { path, workspace_id: project.id, checkout_id: checkout.id, preview: false, ...device } });
+          return;
+        }
+        dispatch({ schema_version: 2, kind: "reveal_path", payload: { path, workspace_id: project.id, checkout_id: checkout.id, is_directory: false, ...device } });
+        return;
+      }
+      dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id } });
+      if (inFront) return showDocuments();
+      if (board.device_id !== node) return this.openWorkspace(board.device_id, project.id, checkout.id);
+      beginOpening({ checkoutId: checkout.id, deviceId: node, path: checkout.path, workspaceId: project.id });
+      dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: project.id, checkout_id: checkout.id, ...(frontDeviceId(rest()) !== node ? { focus_device: true } : {}) } });
+    },
+
+    /** `파일로 남기기`: the board written into a new file at `path` below its checkout (board design, section 4). */
+    keepBoard(board: string, path: string) {
+      dispatch({ schema_version: 2, kind: "board_keep", payload: { board, path } });
+    },
+
+    /** `지우기`, confirmed: the board and every View of it go. */
+    deleteBoard(board: string) {
+      dispatch({ schema_version: 2, kind: "board_delete", payload: { board } });
+    },
+
+    /**
      * A View of a checkout, wherever the screen is: in the Workspace on
      * screen it comes to the front of the documents; anywhere else the
      * checkout comes forward naming it. A device's View needs its device's
