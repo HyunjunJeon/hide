@@ -479,6 +479,7 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
+A board's View waits only until its board reaches the window; a board that was deleted, or went with its session's records, reads `This board was deleted.` with Close view, and no Retry.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the lane's tool, pin, tree and its widths, a pinned lane docked and an unpinned one over the agents; unsaved text returns from the browser's drafts, and the engine's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 The engine connecting before the initial path catalog and saved View arrive does not mean the last Workspace is gone; the existing starting screen waits for that saved choice to settle.
@@ -515,6 +516,15 @@ A tooltip never turns a page into a picture; a tooltip, such as a tab's or a pag
 While the shell drags something (a tab, a divider, a lane divider, a tree item), every page is shown as its still, so the guide or preview draws over it and a drop lands in the shell rather than the page; the pages come back live at release, and a drag inside a page is the page's own.
 In a plain browser tab the view keeps its address on the toolbar row, level with a document header beside it, and below it reads `Pages open in the Hide desktop app.`; a web address offers Open in browser, and nothing else is drawn in its place.
 [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
+
+### Board displays
+
+A board an agent draws with `hide board new`, or brings back with `hide board open`, is a View like a page: it opens in the active area of the agent's checkout, has a tab, splits, moves and closes like one, and comes back after a restart in the area it was in, at the end of that area.
+Its tab carries a board mark and the board's title; its tooltip and accessible name say `Board` and the title, and its tab menu has no path to copy and nothing to reveal.
+The View draws the board's head (its title, how long since it changed and its opener's mark) and then each block from the Markdown the core made for it: a section, a table, code, a quote under its `path:start–end` caption, a Mermaid diagram, a callout in a box with its tone, a divider.
+What the agent changes reaches the View in place, with no reload, even after the operator looked; the blocks the change touched are marked for a moment.
+Each board is one View in a Workspace: an open of a board already shown brings that View forward.
+A board takes no comment, and the phone shows no board.
 
 ### View openers and comments
 
@@ -3130,6 +3140,7 @@ The line opens Conversation when that tab exists, and is plain text otherwise; i
 Primary-screen panes and computers that do not report the screen mode show no line, regardless of the agent kind.
 Pulling the phone's output never sends input to the program or moves the desktop's view.
 볼 것 is the third tab, `대화 | 터미널 | 볼 것` (`터미널 | 볼 것` for an agent with no conversation), and it is there only while the agent has a View open now; the number of Views not seen is on it.
+A board's View is not listed there and does not count toward the tab: the phone draws no board yet, so an agent's board waits in the desktop's Needs You only.
 The list's eye row, the 볼 것 mark, opens the detail on this tab; a row that asks a question or needs an approval, and every other row, opens on the conversation as before, and 대화 goes straight to the agent's conversation.
 The tab lists the Views the agent opened, `안 본 것 N` above `본 것 N`, newest first: a tile with the kind's icon and a dot when the View is not seen, its name, its kind (변경 내용, 문서, 이미지, 웹 화면, 파일) and how long ago it was opened.
 A View the desktop closes leaves the list, and one the agent opens again is not seen again and returns to 안 본 것.
