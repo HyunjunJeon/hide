@@ -52,7 +52,7 @@ const ko = {
   "boardView.deleteBody": "되돌릴 수 없어요.",
   "boardView.deleteCancel": "취소",
   "boardView.tile": "보드",
-  "boardView.tileKept": "{{path}}(으)로 남김",
+  "boardView.tileKept": "남긴 파일: {{path}}",
 } satisfies Catalog<typeof boardViewEnglish>;
 
 const zhCN = {
