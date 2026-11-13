@@ -988,10 +988,22 @@ fn a_board_read_returns_its_markdown_redacted_and_clipped_with_the_block_to_cont
         ],
         30,
     );
-    run.boards = vec![long];
+    let mut kept = board("board-8", "a", "/repo", 2, vec![section("남김", "x")]);
+    kept.state = BoardState::Kept {
+        kept_path: format!("docs/boards/{SECRET}.md"),
+        kept_at_unix_ms: 2,
+    };
+    run.boards = vec![kept, long];
     let mut pen = run.pen();
     assert_eq!(run.investigate(&mut pen), AnalysisEnd::Done);
     let inputs = run.provider.inputs();
+    assert!(
+        inputs[0]["boards"]["listed"][0]["kept_path"]
+            .as_str()
+            .unwrap()
+            .starts_with("docs/boards/"),
+        "a kept board's path is listed, masked"
+    );
     let result = &inputs[1]["last_turn"]["reads"][0];
     assert!(result["text"].as_str().unwrap().starts_with("# 배포 계획"));
     assert!(
@@ -1045,8 +1057,10 @@ fn a_board_of_another_project_and_a_deleted_board_are_refused() {
         assert!(reads[refused].get("text").is_none());
     }
 
-    // A board deleted after the run was handed it is refused by the read
-    // itself, not only left out of the list.
+    // The read holds the rule on its own too: a deleted board it is handed
+    // is refused. A run hands it none (`project_boards` leaves them out), and
+    // one deleted while a run goes on stays readable to that run from the
+    // copy it took when it began.
     let mut gone = book()[3].clone();
     gone.id = "board-1".into();
     let (value, outcome) = reads::fulfil(

@@ -1144,23 +1144,12 @@ impl Runtime {
         })
     }
 
-    /// The Project a board's checkout belongs to, from the facts the
-    /// catalog already read about that folder, as `memory_scope` reads them;
-    /// `None` while they are not known, so the board is not listed.
-    fn board_project(&self, checkout: &crate::boards::BoardCheckout) -> Option<String> {
-        let root = if checkout.device_id == self.node.as_str() {
-            &self.catalog_paths.project(&checkout.path)?.root
-        } else {
-            let facts = self
-                .device_facts
-                .get(&checkout.device_id)
-                .filter(|facts| !facts.reread && facts.unavailable.is_none())?;
-            match facts.facts.get(&checkout.path) {
-                Some(crate::device_catalog::Fact::Known(facts)) => &facts.root,
-                _ => return None,
-            }
-        };
-        Some(hide_project::project_id(&checkout.device_id, root))
+    /// The Project a board's checkout belongs to, as the catalog already
+    /// knows it (`catalog_project`); `None` while it does not, so the board
+    /// is not listed.
+    pub(super) fn board_project(&self, checkout: &crate::boards::BoardCheckout) -> Option<String> {
+        let node = crate::node::NodeId::parse(&checkout.device_id).ok()?;
+        Some(self.catalog_project(&node, &checkout.path)?.id)
     }
 }
 
