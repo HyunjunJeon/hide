@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 
 use super::reads::{Excerpt, ReadRefused, ReadTools, SearchHit, SessionWindow};
 use super::*;
+use crate::boards::{Block, Body};
+use crate::links::ledger::SessionIdentity;
 use crate::suggestions::analysis::{AnalysisBudget, MemoryPen, StopFlag};
 use crate::suggestions::ledger::{RecordEntry, RecordId, RecordIndex, SessionRef, Signal};
 use crate::suggestions::notebook::{LineId, Notebook, Outcome};
@@ -138,6 +140,7 @@ fn entry(id: u64, signal: Signal, tag: &str, session: &str) -> RecordEntry {
 struct Run {
     provider: Arc<Provider>,
     shelf: Shelf,
+    boards: Vec<Board>,
     input: AnalysisInput,
     calls_allowed: Option<u32>,
     start: Instant,
@@ -153,6 +156,7 @@ impl Run {
                 stops: None,
             }),
             shelf: Shelf::default(),
+            boards: Vec::new(),
             input: AnalysisInput {
                 project_id: "project".into(),
                 records: RecordIndex {
@@ -189,6 +193,7 @@ impl Run {
         Investigation::new(
             Arc::new(router),
             Box::new(self.shelf.clone()),
+            self.boards.clone(),
             Box::new(move || match &mut allowed {
                 Some(0) => Err("daily_call_cap".into()),
                 Some(left) => {
@@ -600,6 +605,7 @@ fn an_investigation_that_gets_no_answer_raises_nothing_and_says_so() {
                 Box::new(Investigation::new(
                     Arc::new(router),
                     Box::new(Shelf::default()),
+                    Vec::new(),
                     Box::new(|| Ok(())),
                     plan.stop.token(),
                 ))
@@ -697,4 +703,411 @@ fn a_fix_file_that_is_missing_is_a_new_file_and_one_that_cannot_be_checked_is_re
     assert!(plan.new_file);
     let refused = &run.provider.inputs()[1]["last_turn"]["edits"][1];
     assert_eq!(refused["refused"]["refused"], "target_unchecked");
+}
+
+/// A board one of the Project's sessions drew, its blocks numbered from
+/// `b1`, in the checkout at `path`.
+fn board(id: &str, session: &str, path: &str, updated: u64, blocks: Vec<Body>) -> Board {
+    let blocks: Vec<Block> = blocks
+        .into_iter()
+        .enumerate()
+        .map(|(at, body)| Block {
+            id: format!("b{}", at + 1),
+            changed_at: 1,
+            body,
+        })
+        .collect();
+    Board {
+        id: id.into(),
+        owner: SessionIdentity {
+            device_id: "local".into(),
+            agent: "claude".into(),
+            session_id: session.into(),
+        },
+        checkout: BoardCheckout {
+            device_id: "local".into(),
+            path: path.into(),
+        },
+        title: format!("{id} 계획"),
+        next_block: blocks.len() as u32 + 1,
+        blocks,
+        revision: 1,
+        created_at_unix_ms: updated,
+        updated_at_unix_ms: updated,
+        state: BoardState::Open,
+    }
+}
+
+fn section(title: &str, text: &str) -> Body {
+    Body::Section {
+        title: title.into(),
+        text: text.into(),
+    }
+}
+
+/// The Project of each folder the tests draw in: the root and a worktree
+/// of `project`, another Project, and a folder the catalog has not read.
+fn project_of(checkout: &BoardCheckout) -> Option<String> {
+    match checkout.path.as_str() {
+        "/repo" | "/repo-wt" => Some("project".into()),
+        "/other" => Some("other".into()),
+        _ => None,
+    }
+}
+
+/// The book as a run of `project` would find it: its own open and kept
+/// boards, one of another Project, one the operator deleted, and one in a
+/// folder whose Project is not known.
+fn book() -> Vec<Board> {
+    let mut kept = board(
+        "board-2",
+        "b",
+        "/repo-wt",
+        3_600_000,
+        vec![section("결정", "x")],
+    );
+    kept.state = BoardState::Kept {
+        kept_path: "docs/boards/2026-11-13-plan.md".into(),
+        kept_at_unix_ms: 3_600_000,
+    };
+    let mut deleted = board(
+        "board-4",
+        "a",
+        "/repo",
+        9_000_000,
+        vec![section("지움", "y")],
+    );
+    deleted.state = BoardState::Deleted {
+        deleted_by: crate::boards::Remover::Operator,
+        deleted_at_unix_ms: 9_000_000,
+    };
+    vec![
+        board(
+            "board-1",
+            "a",
+            "/repo",
+            7_200_000,
+            vec![section("원인", "z")],
+        ),
+        kept,
+        board(
+            "board-3",
+            "a",
+            "/other",
+            8_000_000,
+            vec![section("남의 것", "w")],
+        ),
+        deleted,
+        board(
+            "board-5",
+            "a",
+            "/unread",
+            8_500_000,
+            vec![section("모름", "v")],
+        ),
+    ]
+}
+
+#[test]
+fn a_project_with_a_board_lists_it_in_the_turn_input_within_the_records_budget() {
+    let boards = project_boards("project", book().iter(), project_of);
+    assert_eq!(
+        boards.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        ["board-1", "board-2"],
+        "the Project's own boards, newest first; another Project's, a deleted one and an unread folder's are not handed to the run"
+    );
+    let mut run = Run::new(vec![turn(json!([]), json!([]), true)], 30);
+    run.boards = boards;
+    let mut pen = run.pen();
+    assert_eq!(run.investigate(&mut pen), AnalysisEnd::Done);
+    let input = &run.provider.inputs()[0];
+    let listed = input["boards"]["listed"].as_array().unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0]["board"], "board-1");
+    assert_eq!(listed[0]["title"], "board-1 계획");
+    assert_eq!(listed[0]["agent"], "claude");
+    assert_eq!(listed[0]["state"], "open");
+    assert_eq!(
+        listed[0]["record"], 1,
+        "the session record it belongs to, which a session read takes"
+    );
+    assert!(listed[0].get("kept_path").is_none());
+    assert_eq!(listed[1]["state"], "kept");
+    assert_eq!(listed[1]["kept_path"], "docs/boards/2026-11-13-plan.md");
+    assert_eq!(listed[1]["record"], 3, "session b's newest record");
+    let sent = serde_json::to_string(input).unwrap();
+    assert!(
+        !sent.contains("session_id") && !sent.contains("\"a\""),
+        "a board's session is named by its record, never by its id"
+    );
+
+    // A busy Project: thousands of records and the most boards a run is
+    // handed, each with the longest title, still share the records' bytes.
+    let index = RecordIndex {
+        entries: (1..=5_000)
+            .map(|id| {
+                entry(
+                    id,
+                    Signal::FailedTool,
+                    &format!("command {} {}", id % 900, "x".repeat(100)),
+                    "a",
+                )
+            })
+            .collect(),
+    };
+    let crowded: Vec<Board> = (1..=policy::BOARDS_LISTED as u64)
+        .map(|n| {
+            let mut long = board(&format!("board-{n}"), "a", "/repo", n, Vec::new());
+            long.title = "가".repeat(crate::boards::TITLE_CHARS);
+            long
+        })
+        .collect();
+    let turn = hide_ai::Turn {
+        number: 1,
+        left: 29,
+        phase: hide_ai::Phase::Explore,
+    };
+    let text = prompt::input(
+        &turn,
+        &prompt::Carried::default(),
+        &index,
+        &crowded,
+        &Notebook::default(),
+        0,
+    );
+    let value: Value = serde_json::from_str(&text).unwrap();
+    let size = |value: &Value| serde_json::to_string(value).unwrap().len();
+    assert!(
+        size(&value["records"]["groups"]) + size(&value["boards"]["listed"])
+            <= policy::RECORDS_INPUT_BYTES
+    );
+    assert!(size(&value["boards"]["listed"]) <= policy::BOARDS_INPUT_BYTES);
+    assert!(!value["boards"]["listed"].as_array().unwrap().is_empty());
+    assert!(value["boards"]["not_shown"].as_u64().unwrap() > 0);
+    assert!(value["records"]["groups_not_shown"].as_u64().unwrap() > 0);
+    assert!(text.len() <= policy::TURN_INPUT_BYTES);
+}
+
+#[test]
+fn a_board_read_returns_its_markdown_redacted_and_clipped_with_the_block_to_continue_from() {
+    // Small enough for one result: the read is the board's own Markdown.
+    let small = board(
+        "board-1",
+        "a",
+        "/repo",
+        1,
+        vec![
+            section("원인", "테스트 스크립트가 빌드를 먼저 하지 않는다"),
+            Body::Quote {
+                path: "scripts/test.sh".into(),
+                start: 1,
+                end: 2,
+                lines: vec!["#!/bin/sh".into(), "cargo test".into()],
+                note: None,
+            },
+        ],
+    );
+    let index = RecordIndex::default();
+    let read = |board: &str, from: Option<&str>| Read::Board {
+        board: board.into(),
+        from_block: from.map(str::to_owned),
+    };
+    let boards = [small.clone()];
+    let (value, outcome) = reads::fulfil(
+        &read("board-1", None),
+        &index,
+        &boards,
+        &mut Shelf::default(),
+        usize::MAX,
+    );
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(value["text"], crate::boards::markdown(&small));
+    assert_eq!(value["truncated"], false);
+    assert_eq!(value["span"], "blocks b1-b2 of 2");
+
+    // A long board, a credential in its title and in a block, and one block
+    // longer than a whole result.
+    let mut blocks: Vec<Body> = (1..=12)
+        .map(|n| section(&format!("단계 {n}"), &"설명 ".repeat(300)))
+        .collect();
+    blocks[4] = section("설정", &format!("export GITHUB_TOKEN={SECRET}"));
+    blocks[7] = Body::Code {
+        title: None,
+        language: Some("text".into()),
+        code: "가".repeat(6_000),
+    };
+    let mut long = board("board-7", "a", "/repo", 1, blocks);
+    long.title = format!("배포 계획 {SECRET}");
+    let boards = [long.clone()];
+
+    let mut from: Option<String> = None;
+    let mut seen = Vec::new();
+    let mut texts = String::new();
+    for _ in 0..long.blocks.len() + 1 {
+        let (value, outcome) = reads::fulfil(
+            &read("board-7", from.as_deref()),
+            &index,
+            &boards,
+            &mut Shelf::default(),
+            usize::MAX,
+        );
+        assert_eq!(outcome, Ok(()));
+        assert!(value["text"].as_str().unwrap().len() <= policy::READ_RESULT_BYTES);
+        texts.push_str(value["text"].as_str().unwrap());
+        let span = value["span"].as_str().unwrap().to_owned();
+        seen.push(span.clone());
+        match span.split_once("; next from_block ") {
+            Some((_, next)) => {
+                assert_eq!(value["truncated"], true);
+                assert_ne!(from.as_deref(), Some(next), "a read always moves on");
+                from = Some(next.to_owned());
+            }
+            None => {
+                from = None;
+                break;
+            }
+        }
+    }
+    assert!(from.is_none(), "the reads reached the last block: {seen:?}");
+    assert!(seen.len() > 2, "the board came in parts: {seen:?}");
+    assert!(seen.iter().any(|span| span.starts_with("blocks b8-b8 ")));
+    assert!(!texts.contains(SECRET), "a board's credential is masked");
+    assert!(texts.contains("배포 계획"));
+    assert!(texts.contains("단계 12"));
+
+    // Read through a run: nothing a provider is sent holds the credential,
+    // neither the list's title nor the read.
+    let mut run = Run::new(
+        vec![
+            turn(
+                json!([{"tool": "board", "board": "board-7"}]),
+                json!([]),
+                false,
+            ),
+            turn(json!([]), json!([]), true),
+        ],
+        30,
+    );
+    let mut kept = board("board-8", "a", "/repo", 2, vec![section("남김", "x")]);
+    kept.state = BoardState::Kept {
+        kept_path: format!("docs/boards/{SECRET}.md"),
+        kept_at_unix_ms: 2,
+    };
+    run.boards = vec![kept, long];
+    let mut pen = run.pen();
+    assert_eq!(run.investigate(&mut pen), AnalysisEnd::Done);
+    let inputs = run.provider.inputs();
+    assert!(
+        inputs[0]["boards"]["listed"][0]["kept_path"]
+            .as_str()
+            .unwrap()
+            .starts_with("docs/boards/"),
+        "a kept board's path is listed, masked"
+    );
+    let result = &inputs[1]["last_turn"]["reads"][0];
+    assert!(result["text"].as_str().unwrap().starts_with("# 배포 계획"));
+    assert!(
+        result["span"]
+            .as_str()
+            .unwrap()
+            .contains("; next from_block b")
+    );
+    let sent: String = run
+        .provider
+        .asked
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request.input.clone())
+        .collect();
+    assert!(!sent.contains(SECRET), "the list and the read are masked");
+    assert!(
+        run.shelf.asked.lock().unwrap().is_empty(),
+        "no node was asked"
+    );
+}
+
+#[test]
+fn a_board_of_another_project_and_a_deleted_board_are_refused() {
+    let mut run = Run::new(
+        vec![
+            turn(
+                json!([
+                    {"tool": "board", "board": "board-3"},
+                    {"tool": "board", "board": "board-4"},
+                    {"tool": "board", "board": "board-1", "from_block": "b9"},
+                    {"tool": "board", "board": "board-1"}
+                ]),
+                json!([]),
+                false,
+            ),
+            turn(json!([]), json!([]), true),
+        ],
+        30,
+    );
+    run.boards = project_boards("project", book().iter(), project_of);
+    let mut pen = run.pen();
+    assert_eq!(run.investigate(&mut pen), AnalysisEnd::Done);
+    let reads = &run.provider.inputs()[1]["last_turn"]["reads"];
+    assert_eq!(reads[0]["refused"], "unknown_board", "another Project's");
+    assert_eq!(reads[1]["refused"], "unknown_board", "deleted");
+    assert_eq!(reads[2]["refused"], "unknown_block");
+    assert!(reads[3]["text"].as_str().unwrap().contains("원인"));
+    for refused in 0..3 {
+        assert!(reads[refused].get("text").is_none());
+    }
+
+    // The read holds the rule on its own too: a deleted board it is handed
+    // is refused. A run hands it none (`project_boards` leaves them out), and
+    // one deleted while a run goes on stays readable to that run from the
+    // copy it took when it began.
+    let mut gone = book()[3].clone();
+    gone.id = "board-1".into();
+    let (value, outcome) = reads::fulfil(
+        &Read::Board {
+            board: "board-1".into(),
+            from_block: None,
+        },
+        &RecordIndex::default(),
+        &[gone],
+        &mut Shelf::default(),
+        usize::MAX,
+    );
+    assert_eq!(outcome, Err("unknown_board".into()));
+    assert!(value.get("text").is_none());
+}
+
+#[test]
+fn the_board_read_schema_is_pinned() {
+    let schema = prompt::schema(hide_ai::Phase::Explore);
+    let reads = schema["properties"]["reads"]["items"]["oneOf"]
+        .as_array()
+        .unwrap();
+    let board = reads
+        .iter()
+        .find(|read| read["properties"]["tool"] == json!({"const": "board"}))
+        .expect("the board read is offered");
+    assert_eq!(
+        *board,
+        json!({
+            "type": "object", "additionalProperties": false,
+            "required": ["tool", "board"],
+            "properties": {
+                "tool": {"const": "board"},
+                "board": {"type": "string", "minLength": 1, "maxLength": 32},
+                "from_block": {"type": "string", "minLength": 1, "maxLength": 32}
+            }
+        })
+    );
+    let parsed: Read =
+        serde_json::from_value(json!({"tool": "board", "board": "board-12", "from_block": "b4"}))
+            .unwrap();
+    assert_eq!(
+        parsed,
+        Read::Board {
+            board: "board-12".into(),
+            from_block: Some("b4".into()),
+        }
+    );
+    assert_eq!(prompt::SCHEMA_VERSION, "suggestions_investigation.v4");
 }

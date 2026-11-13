@@ -205,6 +205,12 @@ pub(crate) const READ_TURN_BYTES: usize = 24 * 1024;
 pub(crate) const READ_RESULT_BYTES: usize = 8 * 1024;
 pub(crate) const NOTEBOOK_INPUT_BYTES: usize = 20 * 1024;
 pub(crate) const RECORDS_INPUT_BYTES: usize = 12 * 1024;
+/// The boards the Project's sessions drew, listed inside the records'
+/// bytes: at most this many, newest first, in at most this share of them,
+/// so a busy Project still lists its boards and boards never crowd out
+/// its records.
+pub(crate) const BOARDS_LISTED: usize = 20;
+pub(crate) const BOARDS_INPUT_BYTES: usize = 4 * 1024;
 /// The most record numbers one group of fresh records lists.
 pub(crate) const GROUP_RECORDS_SHOWN: usize = 40;
 /// The most record numbers a notebook line lists, its newest.
