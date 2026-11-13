@@ -1097,7 +1097,8 @@ impl Sink for RuntimeSink {
 }
 
 /// What a run's investigation is made of, read under the lock: the
-/// operator's Hide AI and the folders the Project may be read in.
+/// operator's Hide AI, the folders the Project may be read in and the
+/// boards its sessions drew.
 struct InvestigationParts {
     settings: hide_ai::AiSettings,
     machines: crate::ai::AiMachines,
@@ -1105,12 +1106,13 @@ struct InvestigationParts {
     usage: Arc<dyn hide_ai::AiUsageSink>,
     memory: PathBuf,
     checkouts: Vec<Checkout>,
+    boards: Vec<crate::boards::Board>,
 }
 
 impl Runtime {
     /// `None` while Hide AI cannot investigate (B19, D-39). A catalog
     /// Project on a device whose link is down is not a candidate.
-    fn investigation_parts(&self) -> Option<InvestigationParts> {
+    fn investigation_parts(&self, project_id: &str) -> Option<InvestigationParts> {
         if self.suggestions_ai() != SuggestionsAi::Ready {
             return None;
         }
@@ -1134,7 +1136,31 @@ impl Runtime {
             usage: self.ai_usage(),
             memory: self.memory_database_path(),
             checkouts,
+            boards: crate::suggestions::investigation::project_boards(
+                project_id,
+                self.boards.boards(),
+                |checkout| self.board_project(checkout),
+            ),
         })
+    }
+
+    /// The Project a board's checkout belongs to, from the facts the
+    /// catalog already read about that folder, as `memory_scope` reads them;
+    /// `None` while they are not known, so the board is not listed.
+    fn board_project(&self, checkout: &crate::boards::BoardCheckout) -> Option<String> {
+        let root = if checkout.device_id == self.node.as_str() {
+            &self.catalog_paths.project(&checkout.path)?.root
+        } else {
+            let facts = self
+                .device_facts
+                .get(&checkout.device_id)
+                .filter(|facts| !facts.reread && facts.unavailable.is_none())?;
+            match facts.facts.get(&checkout.path) {
+                Some(crate::device_catalog::Fact::Known(facts)) => &facts.root,
+                _ => return None,
+            }
+        };
+        Some(hide_project::project_id(&checkout.device_id, root))
     }
 }
 
@@ -1151,7 +1177,7 @@ pub(super) fn analysis_factory(runtime: Weak<Mutex<Runtime>>) -> AnalysisFactory
             .ai_ready
             .then(|| runtime.upgrade())
             .flatten()
-            .and_then(|runtime| runtime.lock().ok()?.investigation_parts());
+            .and_then(|runtime| runtime.lock().ok()?.investigation_parts(plan.project_id));
         let Some(parts) = parts else {
             return Box::new(TagGrouping) as Box<dyn Analysis>;
         };
@@ -1165,6 +1191,7 @@ pub(super) fn analysis_factory(runtime: Weak<Mutex<Runtime>>) -> AnalysisFactory
         Box::new(Investigation::new(
             router,
             Box::new(reads),
+            parts.boards,
             memory_admission(parts.memory),
             plan.stop.token(),
         ))

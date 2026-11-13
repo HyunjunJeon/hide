@@ -3,14 +3,16 @@
 //! provider (D-22). The model names a read in its answer; Hide resolves the
 //! record it names, refuses a credential file before anything is read,
 //! runs its own fixed read on the Project's node through [`ReadTools`], and
-//! hands the model the result redacted and bounded. Nothing here writes,
-//! and no read runs a program the model chose.
+//! hands the model the result redacted and bounded. A board is answered
+//! from the copies the run was handed (`Investigation::new`), never from a
+//! node. Nothing here writes, and no read runs a program the model chose.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::super::ledger::{RecordId, RecordIndex, SessionRef, Signal};
 use super::super::policy;
+use crate::boards::{Board, BoardState};
 
 /// One read as an answer asks for it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +50,13 @@ pub enum Read {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         count: Option<u32>,
     },
+    /// A board one of the Project's sessions drew, as Markdown, from its
+    /// first block or from `from_block`.
+    Board {
+        board: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_block: Option<String>,
+    },
 }
 
 impl Read {
@@ -59,6 +68,7 @@ impl Read {
             Self::File { .. } => "file",
             Self::Search { .. } => "search",
             Self::GitLog { .. } => "git_log",
+            Self::Board { .. } => "board",
         }
     }
 }
@@ -135,15 +145,19 @@ fn line(text: &str) -> String {
 /// Runs one read the model asked for and answers what the model is shown
 /// of it: the read itself, then either its redacted, bounded text or the
 /// code of why nothing was read. `budget` is what the turn's results may
-/// still take, in bytes of the JSON they are sent as.
+/// still take, in bytes of the JSON they are sent as. `boards` are the
+/// Project's boards the run was handed, the only ones a read can name.
 pub(crate) fn fulfil(
     read: &Read,
     index: &RecordIndex,
+    boards: &[Board],
     tools: &mut dyn ReadTools,
     budget: usize,
 ) -> (Value, Result<(), String>) {
-    let outcome = run(read, index, tools);
     let shown = serde_json::to_value(read).expect("a read serializes");
+    let frame = serde_json::to_string(&shown).map_or(0, |s| s.len()) + RESULT_FRAME_BYTES;
+    let room = policy::READ_RESULT_BYTES.min(budget).saturating_sub(frame);
+    let outcome = run(read, index, boards, tools, room);
     match outcome {
         Err(code) => (json!({"read": shown, "refused": code}), Err(code)),
         Ok(excerpt) => {
@@ -173,7 +187,14 @@ pub(crate) fn fulfil(
     }
 }
 
-fn run(read: &Read, index: &RecordIndex, tools: &mut dyn ReadTools) -> Result<Excerpt, String> {
+/// `room` is what the result's text may take, in bytes of its JSON.
+fn run(
+    read: &Read,
+    index: &RecordIndex,
+    boards: &[Board],
+    tools: &mut dyn ReadTools,
+    room: usize,
+) -> Result<Excerpt, String> {
     let refused = |error: ReadRefused| match error {
         ReadRefused::NotFound => "not_found".to_owned(),
         ReadRefused::Unavailable(code) => code,
@@ -249,7 +270,85 @@ fn run(read: &Read, index: &RecordIndex, tools: &mut dyn ReadTools) -> Result<Ex
                 .clamp(1, policy::GIT_LOG_COMMITS_MAX);
             tools.git_log(path.as_deref(), count).map_err(refused)
         }
+        Read::Board { board, from_block } => {
+            board_excerpt(boards, board, from_block.as_deref(), room)
+        }
     }
+}
+
+/// What a result holds besides its text (the keys, `truncated` and the
+/// span), in bytes of its JSON, beyond the read it repeats.
+const RESULT_FRAME_BYTES: usize = 160;
+
+/// A board's Markdown (`boards::markdown`) from `from` on, in whole blocks
+/// while their masked text fits `room` bytes of JSON, and the next block to
+/// read from in the span. The first block is always given, so a block
+/// longer than a result alone is cut by the guard and the next read still
+/// moves on. A deleted board, and one that is not among the Project's, are
+/// one refusal, so a read cannot tell another Project's board from none.
+fn board_excerpt(
+    boards: &[Board],
+    id: &str,
+    from: Option<&str>,
+    room: usize,
+) -> Result<Excerpt, String> {
+    let board = boards
+        .iter()
+        .find(|board| board.id == id && !matches!(board.state, BoardState::Deleted { .. }))
+        .ok_or("unknown_board")?;
+    let start = match from {
+        None => 0,
+        Some(block) => board
+            .blocks
+            .iter()
+            .position(|shown| shown.id == block)
+            .ok_or("unknown_block")?,
+    };
+    // A part's size as it is sent: masked, escaped, and joined to the one
+    // before by a blank line.
+    let sent = |text: &str| {
+        serde_json::to_string(&crate::session_excerpt::mask(text)).map_or(usize::MAX, |s| s.len())
+    };
+    let mut parts = Vec::new();
+    let mut used = 0;
+    if start == 0 {
+        let title = format!("# {}", board.title);
+        used += sent(&title);
+        parts.push(title);
+    }
+    let mut next = None;
+    let mut last = start;
+    for (at, block) in board.blocks.iter().enumerate().skip(start) {
+        let text = crate::boards::block_markdown(&block.body);
+        let size = sent(&text).saturating_add(4);
+        if at > start && used.saturating_add(size) > room {
+            next = Some(block.id.as_str());
+            break;
+        }
+        used = used.saturating_add(size);
+        parts.push(text);
+        last = at;
+    }
+    let mut text = parts.join("\n\n");
+    if next.is_none() {
+        text.push('\n');
+    }
+    let total = board.blocks.len();
+    let span = match (board.blocks.get(start), board.blocks.get(last)) {
+        (Some(first), Some(end)) => {
+            let shown = format!("blocks {}-{} of {total}", first.id, end.id);
+            match next {
+                Some(next) => format!("{shown}; next from_block {next}"),
+                None => shown,
+            }
+        }
+        _ => "no blocks".to_owned(),
+    };
+    Ok(Excerpt {
+        text,
+        truncated: next.is_some(),
+        span: Some(span),
+    })
 }
 
 #[cfg(test)]
@@ -326,7 +425,7 @@ mod tests {
             "../outside.txt",
             "/etc/passwd",
         ] {
-            let (value, outcome) = fulfil(&file(path), &index, &mut shelf, usize::MAX);
+            let (value, outcome) = fulfil(&file(path), &index, &[], &mut shelf, usize::MAX);
             assert!(outcome.is_err(), "{path} was read");
             assert!(value.get("text").is_none());
         }
@@ -337,6 +436,7 @@ mod tests {
                 path: None,
             },
             &index,
+            &[],
             &mut shelf,
             usize::MAX,
         );
@@ -347,7 +447,7 @@ mod tests {
     fn every_result_is_redacted_and_bounded_by_the_result_and_the_turn() {
         let mut shelf = Shelf::default();
         let index = RecordIndex::default();
-        let (value, outcome) = fulfil(&file("scripts/env.sh"), &index, &mut shelf, usize::MAX);
+        let (value, outcome) = fulfil(&file("scripts/env.sh"), &index, &[], &mut shelf, usize::MAX);
         assert_eq!(outcome, Ok(()));
         let text = value["text"].as_str().unwrap();
         assert!(!text.contains("sk-livevalue"), "{text}");
@@ -357,10 +457,10 @@ mod tests {
             path: None,
             count: None,
         };
-        let (value, _) = fulfil(&history, &index, &mut shelf, usize::MAX);
+        let (value, _) = fulfil(&history, &index, &[], &mut shelf, usize::MAX);
         assert!(serde_json::to_string(&value).unwrap().len() <= policy::READ_RESULT_BYTES + 128);
         assert_eq!(value["truncated"], true);
-        let (value, _) = fulfil(&history, &index, &mut shelf, 2_000);
+        let (value, _) = fulfil(&history, &index, &[], &mut shelf, 2_000);
         assert!(serde_json::to_string(&value).unwrap().len() <= 2_000);
     }
 
@@ -382,7 +482,8 @@ mod tests {
                 fresh: true,
             }],
         };
-        let refusal = |read: Read, shelf: &mut Shelf| fulfil(&read, &index, shelf, usize::MAX).1;
+        let refusal =
+            |read: Read, shelf: &mut Shelf| fulfil(&read, &index, &[], shelf, usize::MAX).1;
         assert_eq!(
             refusal(
                 Read::CiLog {
