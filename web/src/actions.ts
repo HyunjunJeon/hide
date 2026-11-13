@@ -4,7 +4,7 @@ import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { useGroupFeedback } from "./groupTabs";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
-import { areasOf as areasOfLayout, findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
+import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
 // Every shell command in one place, so a shortcut, a button and a menu run
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
@@ -3414,9 +3414,9 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
 
     /**
      * A board's tile in the session record (board design, section 3): an open
-     * board's View comes back, or forward, in its own checkout as the
-     * operator's own open (`board_open`), and a kept board opens its file;
-     * either way that checkout's documents come in front.
+     * board opens as the operator's own View in the Workspace in front
+     * (`board_open`), wherever it was drawn; a kept board opens its file in
+     * the checkout it was kept in.
      */
     openRecordBoard(board: import("./snapshot").RecordBoard) {
       const { project, checkout } = catalogCheckoutAt(board.device_id, board.checkout_path);
@@ -3435,18 +3435,12 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
         dispatch({ schema_version: 2, kind: "reveal_path", payload: { path, workspace_id: project.id, checkout_id: checkout.id, is_directory: false, ...device } });
         return;
       }
-      // A View of it already in front's layout comes forward by its id, as a
-      // record View's does; otherwise the core makes it again and brings it
-      // forward itself, so the page asks for nothing that could race it.
-      const layout = inFront ? workspaceViewOf(rest())?.layout : null;
-      const shown = layout ? areasOfLayout(layout.root).flatMap((area) => area.displays).find((display) => display.board === board.id) : undefined;
-      if (shown) return this.openViewAt(board.device_id, board.checkout_path, shown.id);
-      // One event: the core brings the board's checkout forward and its View
-      // to the front, or refuses and moves nothing; the page only leaves the
-      // Overview and says the checkout is opening, as an open from there does.
-      if (!inFront) beginOpening({ checkoutId: checkout.id, deviceId: board.device_id, path: checkout.path, workspaceId: project.id });
+      // An open board opens where the operator is: in the Workspace in front,
+      // whichever checkout or machine drew it, one event that switches nothing.
+      const front = frontViewWorkspace();
+      if (!front) return diagnostic(`record board: no Workspace in front to open ${board.id} in`);
       ui().setStackFront("view");
-      dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id } });
+      dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id, workspace: { device_id: front.device_id, path: front.path } } });
     },
 
     /**

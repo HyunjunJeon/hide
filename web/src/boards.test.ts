@@ -128,7 +128,7 @@ describe("where 파일로 남기기 offers to keep a board (board design, sectio
     expect(name(path)).not.toMatch(/[<>:"/\\|?*]|[. ]\.md$/);
     expect([...name(path)].some((letter) => letter.charCodeAt(0) < 0x20)).toBe(false);
   });
-  it("cuts a long title between two characters, within 255 bytes for the name and 300 characters for the path", () => {
+  it("cuts a long title between two characters, at 80 characters and within 255 bytes for the name", () => {
     for (const title of ["갱".repeat(200), "word ".repeat(80), "가a".repeat(150)]) {
       const path = keep(title);
       expect(new TextEncoder().encode(name(path)).length).toBeLessThanOrEqual(255);
@@ -136,7 +136,14 @@ describe("where 파일로 남기기 offers to keep a board (board design, sectio
       expect(path).toMatch(/^docs\/boards\/2026-11-03-[^-].*[^-]\.md$/);
       expect(path.includes("\ufffd")).toBe(false);
     }
-    // 241 bytes are left for the slug: 80 Hangul syllables of three bytes.
     expect(name(keep("갱".repeat(200)))).toBe(`2026-11-03-${"갱".repeat(80)}.md`);
+    expect(name(keep("word ".repeat(80)))).toBe(`2026-11-03-${"word-".repeat(16).slice(0, -1)}.md`);
+    // Four-byte letters reach 255 bytes first: 60 of them are 240 bytes,
+    // with the date before them and `.md` after.
+    expect([...name(keep("𠀀".repeat(100)))].length).toBe(11 + 60 + 3);
+  });
+  it("is composed (NFC) even where lower case undoes the composition", () => {
+    const path = keep("İSTANBUL Ǆ");
+    expect(path).toBe(path.normalize("NFC"));
   });
 });

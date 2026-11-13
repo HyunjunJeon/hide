@@ -528,7 +528,7 @@ Each board is one View in a Workspace: an open of a board already shown brings t
 A board takes no comment, and the phone shows no board.
 
 The head of an open board carries `파일로 남기기` and `지우기` (`Keep as file`, `Delete`) before its opener's mark; a kept board's head carries neither.
-`파일로 남기기` opens a popover with one path field, filled with `docs/boards/<YYYY-MM-DD>-<slug>.md`: the operator's date, and the title as written, its letters and digits in any script kept, each run of anything else one `-`, lower case where the script has case (`로그인 흐름 정리: 토큰 갱신` gives `docs/boards/<date>-로그인-흐름-정리-토큰-갱신.md`); it is cut between two characters so the file name stays within 255 bytes, and a title with no letter or digit gives the board's id.
+`파일로 남기기` opens a popover with one path field, filled with `docs/boards/<YYYY-MM-DD>-<slug>.md`: the operator's date, and the title as written, its letters and digits in any script kept, each run of anything else one `-`, lower case where the script has case (`로그인 흐름 정리: 토큰 갱신` gives `docs/boards/<date>-로그인-흐름-정리-토큰-갱신.md`); it is cut between two characters at 80 characters, sooner when the file name would pass 255 bytes, and a title with no letter or digit gives the board's id.
 `남기기` writes the board, as the Markdown its View draws with a `#` title line, into a new file at that path below the checkout of the Workspace the View is in, making the folders it needs; Git is not touched.
 That is the checkout the operator is looking at: a board a parent agent showed in its own checkout (a mission's Conductor showing a worker's board in the project) is kept there, not in the worker's worktree, which goes once its work merges.
 The path is refused unless it ends in `.md`, stays below the checkout with no `.` or `..` name, has no name starting with `.`, and is at most 300 characters; a file there that already holds anything is never written over.
@@ -538,7 +538,8 @@ A keep that fails says why on a line under the head (the path refused, a file al
 An agent's own `hide board delete` closes its Views the same way, so a deleted board never waits in Needs You.
 
 A board whose View closed, by the operator, the View cap or a closed pane, stays open, and the session record's 결과물 lists it among the tiles: each board its session or a descendant drew, open on screen or not, with a board mark and its title, a kept one with its file's mark and path.
-Pressing an open board's tile brings the board's own checkout forward with its View back, or forward, in front of its area, in one step that moves nothing when the board can no longer open, as the operator's own open: seen, and still wearing its drawing agent's mark while that agent's session runs in a pane.
+Pressing an open board's tile opens it where the operator is: in the active area of the Workspace in front, whichever checkout or machine drew it (a worker's board opens in the Conductor's project checkout, a device's board in this machine's checkout, and the other way round), in front of that area, as the operator's own open: seen, and still wearing its drawing agent's mark while that agent's session runs in a pane.
+It switches nothing, neither the Workspace nor the machine in front, and a board that can no longer open moves nothing; a View of it already in that Workspace comes to the front instead, and one outside the board's own checkout is not put back after a restart.
 Pressing a kept board's tile opens its file; a deleted board has no tile.
 
 ### View openers and comments

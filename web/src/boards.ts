@@ -83,6 +83,8 @@ const KEEP_FOLDER = "docs/boards/";
 const KEEP_PATH_CHARS = 300;
 /** A file name on every system Hide runs on: at most this many bytes in UTF-8. */
 const FILE_NAME_BYTES = 255;
+/** Characters of the default slug, so a kept path stays short enough for Git on Windows without long paths. */
+const SLUG_CHARS = 80;
 
 /**
  * Where `파일로 남기기` offers to keep a board (board design, section 4):
@@ -94,16 +96,17 @@ const FILE_NAME_BYTES = 255;
  * Nothing a Windows, macOS or Linux file name refuses survives (no
  * `< > : " / \ | ? *`, control character or trailing dot or space), and
  * the name starts with the date, so it is never a reserved device name such
- * as `CON`. It is cut between two characters so the file name stays within
- * 255 bytes and the path within the core's 300 characters; a title with
- * nothing left gives the board's id. The core checks whatever path the
+ * as `CON`. It is cut between two characters at 80 characters, and sooner
+ * when the file name would pass 255 bytes; a title with nothing left gives
+ * the board's id. The core checks whatever path the
  * operator sends.
  */
 export function defaultKeepPath(board: { id: string; title: string }, now: Date): string {
   const two = (value: number) => String(value).padStart(2, "0");
   const prefix = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}-`;
-  const words = board.title.normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "");
-  const slug = cutSlug(words, FILE_NAME_BYTES - utf8Bytes(prefix) - utf8Bytes(".md"), KEEP_PATH_CHARS - [...`${KEEP_FOLDER}${prefix}.md`].length) || board.id;
+  // Lower case first: lowering can undo composition (İ), so NFC comes after.
+  const words = board.title.toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "");
+  const slug = cutSlug(words, FILE_NAME_BYTES - utf8Bytes(prefix) - utf8Bytes(".md"), Math.min(SLUG_CHARS, KEEP_PATH_CHARS - [...`${KEEP_FOLDER}${prefix}.md`].length)) || board.id;
   return `${KEEP_FOLDER}${prefix}${slug}.md`;
 }
 

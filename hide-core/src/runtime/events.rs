@@ -655,12 +655,20 @@ pub(super) struct BoardWorkspace {
     pub(super) path: String,
 }
 
-/// The operator's `지우기` on a board's View, or a press on a board's tile in
-/// the session record (`board_open`): the board it names.
+/// The operator's `지우기` on a board's View: the board it names.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BoardPayload {
     pub(super) board: String,
+}
+
+/// A press on a board's tile in the session record: the board, and the
+/// Workspace the press came from, where it opens.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BoardOpenPayload {
+    pub(super) board: String,
+    pub(super) workspace: BoardWorkspace,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1793,7 +1801,7 @@ pub(super) enum Event {
     DirCreate(ExplorerCreatePayload),
     BoardKeep(BoardKeepPayload),
     BoardDelete(BoardPayload),
-    BoardOpen(BoardPayload),
+    BoardOpen(BoardOpenPayload),
     PathRename(PathRenamePayload),
     PathMove(PathMovePayload),
     PathCopy(PathCopyPayload),
@@ -2111,7 +2119,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "file_create" => decode!(ExplorerCreatePayload, FileCreate),
         "board_keep" => decode!(BoardKeepPayload, BoardKeep),
         "board_delete" => decode!(BoardPayload, BoardDelete),
-        "board_open" => decode!(BoardPayload, BoardOpen),
+        "board_open" => decode!(BoardOpenPayload, BoardOpen),
         "dir_create" => decode!(ExplorerCreatePayload, DirCreate),
         "path_rename" => decode!(PathRenamePayload, PathRename),
         "path_move" => decode!(PathMovePayload, PathMove),
@@ -3853,7 +3861,10 @@ impl Runtime {
                 &(payload.workspace.device_id, payload.workspace.path),
             ),
             Event::BoardDelete(payload) => self.operator_delete_board(&payload.board),
-            Event::BoardOpen(payload) => self.operator_open_board(&payload.board),
+            Event::BoardOpen(payload) => self.operator_open_board(
+                &payload.board,
+                &(payload.workspace.device_id, payload.workspace.path),
+            ),
             Event::DirCreate(payload) => self.request_explorer_change(ExplorerRequest {
                 root: payload.root,
                 device: payload.device_id,

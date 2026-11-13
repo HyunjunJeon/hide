@@ -1257,19 +1257,46 @@ impl Runtime {
         if beside {
             return self.place_beside(key, &base, tab_id, &path, kind, committed);
         }
+        // A kept board's display becoming its file's (`show_kept_file`): when
+        // the file already shows in this Workspace (a record tile pressed
+        // while the file was read) that View comes to the front and the
+        // board's closes; when the board's display is gone (closed, or its
+        // board deleted meanwhile) the file opens in the area as any open
+        // does. Neither reaches the screen as an error.
+        let mut replace = replace;
+        let swapping = replace.is_some_and(|id| self.boards.take_kept_swap(key, id));
+        if let Some(id) = replace.filter(|_| swapping) {
+            let layout = self.view_layout_of(key);
+            let present = layout.and_then(|layout| layout.display(id)).is_some();
+            let shown = layout.and_then(|layout| {
+                layout
+                    .displays()
+                    .find(|display| display.id != id && display.shows(&path, kind, committed))
+                    .map(|display| display.id.clone())
+            });
+            match (present, shown) {
+                (false, _) => replace = None,
+                (true, Some(shown)) => {
+                    self.change_view_layout(key, |layout, stamp| {
+                        layout.remove(id);
+                        layout.focus(&shown, stamp)?;
+                        Ok(((), true))
+                    })?;
+                    self.refresh_unseen_rows();
+                    return Ok(true);
+                }
+                (true, None) => {}
+            }
+        }
         if let Some(id) = replace {
             // The read belongs to the empty tab captured at open, or to the
-            // board kept as this file (`show_kept_file`). A close or
-            // navigation meanwhile must never overwrite the operator's newer work.
-            let kept_board = self
-                .view_layout_of(key)
-                .and_then(|layout| layout.display(id))
-                .and_then(|display| display.board.clone())
-                .filter(|board| self.board_kept_at(board, key, &path));
+            // board kept as this file. A close or navigation meanwhile must
+            // never overwrite the operator's newer work.
             let placed = self.change_view_layout(key, |layout, stamp| {
-                if !layout.display(id).is_some_and(|display| {
-                    display.is_new_tab() || (kept_board.is_some() && display.board == kept_board)
-                }) {
+                if !layout
+                    .display(id)
+                    .is_some_and(|display| display.is_new_tab() || swapping)
+                {
                     return Err(LayoutError::UnknownDisplay(id.to_owned()));
                 }
                 let area_id = layout
@@ -1306,7 +1333,7 @@ impl Runtime {
             });
             placed?;
             // A kept board's View that waited to be looked at waits no more.
-            if kept_board.is_some() {
+            if swapping {
                 self.refresh_unseen_rows();
             }
             return Ok(true);
