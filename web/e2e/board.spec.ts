@@ -216,7 +216,7 @@ test("the operator keeps a board as a file, opens a closed one from the record, 
     await screenshot(page, "keep-path-popover");
     await page.locator("[data-board-keep-popover] [data-board-keep-confirm]").click();
     const file = path.join(checkout, ...offered.split("/"));
-    await expect.poll(() => fs.existsSync(file), { message: `${offered} written`, timeout: 15_000 }).toBe(true);
+    await expect.poll(() => fs.existsSync(file), { message: `${offered} written` }).toBe(true);
     const export_ = (await board(["show", "board-1"])).result!.markdown!;
     expect(fs.readFileSync(file, "utf8")).toBe(export_);
     // The same place shows that file now, and no board View is left.
@@ -239,7 +239,7 @@ test("the operator keeps a board as a file, opens a closed one from the record, 
     await page.locator(`[data-pane-view="${pane}"] [data-pane-record]`).click();
     const record = page.locator('[data-session-record="lane"]');
     const tile = record.locator('[data-record-board="board-2"]');
-    await expect(tile).toBeVisible({ timeout: 30_000 });
+    await expect(tile).toBeVisible();
     await expect(record.locator('[data-record-board="board-1"]')).toHaveAttribute("data-record-board-state", "kept");
     await screenshot(page, "record-board-tiles");
     await tile.click();
