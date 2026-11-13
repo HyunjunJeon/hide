@@ -71,6 +71,11 @@ pub(crate) const MISSIONS: &str = "missions.json";
 /// its keys, and every pass that rewrites `MISSIONS` rewrites each of them
 /// the same way (`mission_files`), including the index metadata identities.
 pub(crate) const MISSIONS_DIR: &str = hide_kit::layout::MISSIONS_DIR;
+/// The board folder (`hide_kit::layout::boards_dir`): each board's file in
+/// it is keyed by the `BOARDS` rows, and every pass that rewrites a store
+/// rewrites each of them the same way (`board_files`). Its index names no
+/// machine. Written only by builds that have node ids.
+pub(crate) const BOARDS: &str = hide_kit::layout::BOARDS_DIR;
 const FACTORY: &str = "factory.sqlite3";
 /// Where a move keeps its staging copies (`reown::staging_dir`); the
 /// move's other files, which `hide_kit::layout` names, are `UNBOUND`.
@@ -97,6 +102,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     LOCAL_ISSUES,
     MISSIONS,
     MISSIONS_DIR,
+    BOARDS,
     // Mission ids and node keys only; no machine is named in it.
     hide_kit::layout::MISSION_EVENTS,
     PROJECT_MEMORY,
@@ -1128,6 +1134,21 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         Moves::Stays,
     ),
     (HOOK_FACTS, "/panes/{key}", Mechanism::Owned, Moves::Pane),
+    // A board's owner session and its checkout: the session id and the path
+    // are beside their machine's id and stay.
+    (
+        BOARDS,
+        "/owner/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        BOARDS,
+        "/checkout/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (BOARDS, "/checkout/path", Mechanism::Owned, Moves::Stays),
 ];
 
 /// The rest of a state folder, which names no machine: the daemon's own
@@ -1442,7 +1463,18 @@ pub(crate) fn read_json(path: &Path) -> Result<Option<Value>, String> {
 /// Each mission's file in the mission folder of `state_dir`, by its name
 /// in the folder, in name order; none without the folder.
 pub(crate) fn mission_files(state_dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
-    let dir = state_dir.join(MISSIONS_DIR);
+    folder_files(state_dir, MISSIONS_DIR)
+}
+
+/// Each board's file in the board folder of `state_dir`, its index
+/// included, by its name in the folder, in name order; none without the
+/// folder.
+pub(crate) fn board_files(state_dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    folder_files(state_dir, BOARDS)
+}
+
+fn folder_files(state_dir: &Path, folder: &str) -> Result<Vec<(String, PathBuf)>, String> {
+    let dir = state_dir.join(folder);
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1453,7 +1485,7 @@ pub(crate) fn mission_files(state_dir: &Path) -> Result<Vec<(String, PathBuf)>, 
         let entry = entry.map_err(|error| error.to_string())?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.ends_with(".json") {
-            files.push((format!("{MISSIONS_DIR}/{name}"), entry.path()));
+            files.push((format!("{folder}/{name}"), entry.path()));
         }
     }
     files.sort();

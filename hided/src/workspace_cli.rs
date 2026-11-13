@@ -454,6 +454,26 @@ pub fn request_plan(
     })
 }
 
+/// `hide board`: a command over the caller's session's boards, answered by
+/// the core without a shell.
+pub fn request_board(
+    credential: &mut Credential,
+    command: &hide_core::boards::BoardCommand,
+) -> Result<Value, String> {
+    credential.run(|path, after| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange(
+            path,
+            &reference,
+            json!({"type":"board","request_id":request_id,"command":command}),
+            &request_id,
+            true,
+            after,
+        )
+    })
+}
+
 /// `hide agent catalog`: read from what the core holds, after the daemon's
 /// wait of up to 10 seconds for one read of the model lists, so the
 /// exchange is given longer than an ordinary read.

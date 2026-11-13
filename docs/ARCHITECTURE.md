@@ -1036,6 +1036,27 @@ The B6 wake check reads the same count in `prepare_delivery`, so a spawn and a w
 The step's delegation is folded from the published ledger (`fold_delegations`, on `publish_delivery` and when the plans are read back) and saved with the plan, each delegation keeping the last letter id it read, because letters are pruned and the step must say what its child did after they are gone.
 `refresh_plans` keys its view on the book's change count, the panes' sessions and the panes and sessions of the children the shown plans handed steps to, so a child that opens, moves or ends remakes the view and a quiet burst does not; a shown plan brings its children's plans with it.
 
+## Session boards
+
+A board is what an agent draws for the operator with `hide board`: a title and blocks (a section, a callout, a table, code, a quote of a file, one Mermaid diagram, a divider), kept by the core for the native session that drew it, as a plan is ([delivery.md: Boards](delivery.md#boards)).
+`hide-core/src/boards.rs` owns the model, the rules each block is held to (a refusal names the field, such as `blocks[2].rows[3]`), the five edit operations (insert, update, replace, remove, move) applied all or none as one revision, and `boards::markdown`, the one export the screen, a kept file and Hide AI read; `runtime/boards.rs` owns the book, the commands, who may change or read a board, the limits, and the boards going with their session.
+Only the pane-bound caller whose native session drew a board changes it (`caller_session`, the plan's key); another session gets `board_not_yours`.
+A board is read by its session, by an agent in its checkout, and by an ancestor of the drawing session in the delivery ledger's registrations, so a Conductor reads the boards its workers draw in their own worktrees.
+Block ids (`b<n>`) come from a counter that only grows, and board ids (`board-<n>`) from the store's, so neither is given twice.
+A deleted board leaves a stub (its id, owner, title and who deleted it) so a later command answers `board_deleted`; the stub, and every board of a session whose records are deleted or pruned, goes in the same transition as the session's plan (`drop_boards_of`).
+
+The store is a folder of its own, `state/boards/` (`hide_kit::layout::boards_dir`), one `board-<n>.json` per board beside `index.json` with the next id and one line per board; `board_store.rs` owns it.
+The plan's table in `links.sqlite3` was not used: a build that opens that store at a schema it does not know sets the whole record aside, so a fork-only or a newer schema there would take letters, sessions and plans with it, and a build that never knew boards never reads a folder of its own.
+For the same reason a board never reaches `workspace-views.json`, and both stay at their schemas (16 and 5; `runtime::tests::boards`).
+The folder is read once when the runtime is created, before its lock exists; a body file is the authority on its board, so a board written before a stop whose index line was not (its number at or past the index's next id) is still read, while a file whose board the index names no line for and whose number is below the index's next id is a board that went whose file could not be removed, which the start removes rather than reads back; the next id is past both the index's and the highest file's.
+An index of another schema keeps every board command out (`board_store_unavailable`), so nothing writes over it.
+After that, each accepted command hands the boards it changed to one save thread, which holds at most one pending body per board and the newest index and writes off the lock; a body or a delete that fails is kept and done again with the next save unless a newer one of that board came first, and dropping the writer waits for it and tries once more what failed.
+Each command is one change under `Mutex<Runtime>`: it checks the board, serializes it once to hold it to 64 KiB, and announces a change only when the board moved (`Core::board_command`); a `show` copies the boards it prints under the lock and draws their Markdown or records after it is released (`BoardTurn`); a refused or unchanged command publishes nothing, and no timer or watcher is added.
+A core move or a device's new id rewrites each board's owner and checkout machine ids by the `KEYS` rows of `node_migration`, as a mission's file is; the index names no machine.
+`hide board` reaches the core through the pane capability a plan uses, with no shell open (`ScopedRequest::Board`, the full frame like a plan's), and the command reads a quote's lines itself, from the caller's checkout on the machine that holds the file, after learning the checkout through the hook route's `WorkspaceInfo`; the core never reads a file for a board.
+A quote's path is held to the suggestion investigation's rule (`suggestions::investigation::reads::readable_path`, which `boards.rs` calls), so every path a board quotes is one Hide AI may read; changing that rule changes what a board may quote.
+The board View, its rest field and its open path are not built yet; Hide AI reads boards through `BoardRuntime::boards` and `boards::markdown` only.
+
 ## Session threads
 
 A session thread (PRD session-docs-and-assistant B25-B29) is one agent pane's session drawn as a conversation, and its input box types into that pane.

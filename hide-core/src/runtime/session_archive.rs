@@ -708,8 +708,10 @@ impl Runtime {
                         .map(|member| (member.machine.clone(), member.native_session_id.clone()))
                         .collect();
                     self.drop_missions_of(&sessions);
-                    // So does every session's own plan (PRD hide-plan B23).
+                    // So does every session's own plan (PRD hide-plan B23),
+                    // and every board it drew.
                     self.drop_plans_of(&sessions);
+                    self.drop_boards_of(&sessions);
                     crate::diagnostic!(serde_json::json!({
                         "component": "session_archive", "kind": "session_archive.deleted",
                         "archive_id": id.as_str(),
@@ -1272,13 +1274,14 @@ impl Runtime {
         &mut self,
         sessions: Vec<crate::links::ledger::SessionIdentity>,
     ) -> bool {
-        // A pruned session's plan went with its rows (PRD hide-plan B23).
-        let plans = self.drop_plans_of(
-            &sessions
-                .iter()
-                .map(|session| (session.device_id.clone(), session.session_id.clone()))
-                .collect::<Vec<_>>(),
-        );
+        // A pruned session's plan went with its rows (PRD hide-plan B23),
+        // and so do the boards it drew.
+        let pruned = sessions
+            .iter()
+            .map(|session| (session.device_id.clone(), session.session_id.clone()))
+            .collect::<Vec<_>>();
+        let plans = self.drop_plans_of(&pruned);
+        self.drop_boards_of(&pruned);
         let keys = sessions
             .into_iter()
             .map(|session| (session.device_id, session.agent, session.session_id))

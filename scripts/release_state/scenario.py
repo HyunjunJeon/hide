@@ -340,6 +340,25 @@ class Scenario:
                                        "--brief 'Review notes.md and report'")
         return answer
 
+    def boards(self):
+        """A board drawn by an agent on the core and one on the device: each
+        board's file names the machine and the session that drew it and the
+        checkout it was drawn in, which a device's new id and a core move
+        rekey. A release before `hide board` refuses the command, and the
+        report records the step as not done."""
+        blocks = [{"type": "section", "title": "Release state", "text": "Drawn by the release-state scenario."}]
+        drawn = {}
+        for agent in ("core-a", "dev-a"):
+            command = f"hide board new --title 'Release state' --json '{json.dumps(blocks)}'"
+            result = self.run(agent, command)
+            answer = result.get("json") or {}
+            if answer.get("ok") is not True:
+                if result["rc"] != 0 and ("unknown command" in result["err"] or "neither a folder" in result["err"]):
+                    raise NotInRelease(f"rc={result['rc']} {result['err'][-300:]}")
+                raise Stop(f"`{command}` answered rc={result['rc']} {result['out'][-1500:]} {result['err'][-400:]}")
+            drawn[agent] = answer["result"]["board"]["id"]
+        return drawn
+
     def mission(self):
         """A mission conducted from the device, with its worker there: a
         worker on another machine than the mission's needs the project's
@@ -717,6 +736,7 @@ class Scenario:
             self.step("letters to and from a device agent", self.letters)
             self.step("project memory cards", self.memory)
             self.step("plan step spawned from a device session", self.plan_spawn)
+            self.step("a board drawn on the core and on the device", self.boards)
             self.step("mission conducted on the device with its worker there", self.mission)
             self.step("decision View opened by a device agent and closed", self.decision_view)
             self.step("missions in each state a later build reads", self.mission_states)

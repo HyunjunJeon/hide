@@ -440,5 +440,24 @@ class RealCurl(unittest.TestCase):
                 self.assertIn("curl exited 22", str(stopped.exception))
 
 
+
+class ContractReads(unittest.TestCase):
+    """The installer reads the repository's contracts as UTF-8 whatever the
+    system's own encoding: Windows reads a text file as cp1252 unless told,
+    and cp1252 cannot decode the prompt mark (U+276F) that
+    contracts/agent-adapters.json holds, which stopped the Windows lane."""
+
+    def test_the_contracts_are_read_as_utf8_where_the_default_is_cp1252(self):
+        original = Path.read_text
+
+        def windows(path, encoding=None, errors=None, **rest):
+            return original(path, encoding=encoding or "cp1252", errors=errors, **rest)
+
+        adapters = json.loads((install.CHECKOUT / "contracts/agent-adapters.json").read_text(encoding="utf-8"))
+        kind = next(row["program"] for row in adapters if row.get("program"))
+        with mock.patch.object(Path, "read_text", windows):
+            self.assertIsInstance(install.full_access_words(kind), list)
+            self.assertIsInstance(install.full_access_flags(), dict)
+
 if __name__ == "__main__":
     unittest.main()

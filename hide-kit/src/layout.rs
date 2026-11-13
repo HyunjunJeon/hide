@@ -187,6 +187,29 @@ pub fn mission_file(missions_dir: &Path, id: &str) -> PathBuf {
     missions_dir.join(format!("{id}.json"))
 }
 
+/// The folder of the agents' boards (`hide board`): one file per board,
+/// named by its id, beside [`board_index`]; its owner is the core's board
+/// store. A folder of its own, so a build that does not know boards never
+/// reads it and no other store's schema moves for it.
+pub const BOARDS_DIR: &str = "boards";
+
+pub fn boards_dir(state_dir: &Path) -> PathBuf {
+    state_dir.join(BOARDS_DIR)
+}
+
+/// The board folder's index: the next board id and one line per board.
+pub fn board_index(boards_dir: &Path) -> PathBuf {
+    boards_dir.join(BOARD_INDEX)
+}
+
+pub const BOARD_INDEX: &str = "index.json";
+
+/// One board's file in the board folder. A board id is `board-<n>`
+/// (`hide_core::boards::valid_id`), so it names one file there.
+pub fn board_file(boards_dir: &Path, id: &str) -> PathBuf {
+    boards_dir.join(format!("{id}.json"))
+}
+
 /// The schema 1 mission book as it was before its first conversion to
 /// node criteria, kept once so a downgrade can be restored by hand; its
 /// owner is the core's mission store.

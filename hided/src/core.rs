@@ -100,6 +100,13 @@ enum Command {
         proofs: hide_core::plans::Proofs,
         reply: Sender<Result<hide_core::plans::PlanTurn, String>>,
     },
+    Board {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        command: hide_core::boards::BoardCommand,
+        reply: Sender<Result<serde_json::Value, String>>,
+    },
     PlanContext {
         device_id: String,
         pane_id: String,
@@ -561,6 +568,29 @@ impl CoreHandle {
             || "plan_unavailable".to_owned(),
             |proof| proof.unconfirmed(),
         ))
+    }
+
+    /// Runs a `hide board` command on the owner thread.
+    pub fn board(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        command: hide_core::boards::BoardCommand,
+    ) -> Result<serde_json::Value, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::Board {
+                device_id: device.to_owned(),
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                command,
+                reply,
+            })
+            .map_err(|_| "board_store_unavailable".to_owned())?;
+        result
+            .recv()
+            .map_err(|_| "board_store_unavailable".to_owned())?
     }
 
     /// The pane's plan summary for its prompt hook, on the owner thread;
@@ -1598,6 +1628,15 @@ fn owner_loop(
             } => {
                 let _ = reply
                     .send(core.plan_command(&device_id, &pane_id, &expected, command, &proofs));
+            }
+            Command::Board {
+                device_id,
+                pane_id,
+                expected,
+                command,
+                reply,
+            } => {
+                let _ = reply.send(core.board_command(&device_id, &pane_id, &expected, command));
             }
             Command::PlanContext {
                 device_id,

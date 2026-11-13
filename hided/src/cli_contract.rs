@@ -1,5 +1,5 @@
 //! The contract of the commands other tools call (`hide agent`, `ps`,
-//! `request`, `inbox`, `watch`, `mission`, `task`, `device`, `pane`, `workspace
+//! `request`, `inbox`, `watch`, `mission`, `task`, `board`, `device`, `pane`, `workspace
 //! purpose`, `workspace remove`): each command's words, arguments and options, where its
 //! answer sits in the line it prints, and the JSON Schema of that answer.
 //!
@@ -20,7 +20,7 @@ pub const FORMAT: u32 = 1;
 
 /// The topics whose every command is in the table.
 const TOPICS: &[&str] = &[
-    "agent", "ps", "request", "inbox", "watch", "mission", "task", "device", "pane",
+    "agent", "ps", "request", "inbox", "watch", "mission", "task", "board", "device", "pane",
 ];
 
 /// What a value must be for the command's parser to take it.
@@ -1504,7 +1504,112 @@ pub const COMMANDS: &[Spec] = &[
         answers: &["plan"],
         refusals: &["plan_agent_unknown"],
     },
+    Spec {
+        words: &["board", "new"],
+        arguments: &[],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[
+            required("--title", Text),
+            cleared("--file", Text, &["--json"]),
+            cleared("--json", Json, &["--file"]),
+        ],
+        rest: None,
+        answers: &["board"],
+        refusals: &[
+            "board_invalid",
+            "board_too_large",
+            "board_limit",
+            "board_session_unknown",
+            "board_store_unavailable",
+            "quote_refused",
+            "quote_unreadable",
+        ],
+    },
+    Spec {
+        words: &["board", "set"],
+        arguments: &[BOARD],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[
+            cleared("--file", Text, &["--json"]),
+            cleared("--json", Json, &["--file"]),
+            optional("--title", Text),
+            optional("--revision", Unsigned),
+        ],
+        rest: None,
+        answers: &["board"],
+        refusals: &[
+            "board_invalid",
+            "board_too_large",
+            "board_unknown",
+            "board_not_yours",
+            "board_deleted",
+            "board_kept",
+            "board_moved",
+            "quote_refused",
+            "quote_unreadable",
+        ],
+    },
+    Spec {
+        words: &["board", "edit"],
+        arguments: &[BOARD],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[
+            cleared("--file", Text, &["--json"]),
+            cleared("--json", Json, &["--file"]),
+            optional("--revision", Unsigned),
+        ],
+        rest: None,
+        answers: &["board"],
+        refusals: &[
+            "board_invalid",
+            "board_too_large",
+            "board_unknown",
+            "board_not_yours",
+            "board_deleted",
+            "board_kept",
+            "board_moved",
+            "quote_refused",
+            "quote_unreadable",
+        ],
+    },
+    Spec {
+        words: &["board", "show"],
+        arguments: &[Arg {
+            name: "board",
+            value: Key,
+            required: false,
+            value_with: None,
+        }],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[switch("--json")],
+        rest: None,
+        answers: &["board_shown", "board", "board_list"],
+        refusals: &["board_unknown", "board_not_yours", "board_deleted"],
+    },
+    spec(&["board", "list"], &[], &[], &["board_list"]),
+    Spec {
+        words: &["board", "delete"],
+        arguments: &[BOARD],
+        repeats: None,
+        needs_one_of: &[],
+        options: &[],
+        rest: None,
+        answers: &["board"],
+        refusals: &["board_unknown", "board_not_yours", "board_deleted"],
+    },
 ];
+
+/// The board a `hide board` command names: a board id, `board-<n>`.
+const BOARD: Arg = Arg {
+    name: "board",
+    value: Key,
+    required: true,
+    value_with: None,
+};
 
 /// The command `args` (the words after `hide`) name, by its longest words.
 /// Whether `topic` is one whose every command the table names.
@@ -1631,7 +1736,7 @@ fn body() -> Value {
             "ratio": "two decimal integers as <passed>/<total>, such as 6/6",
             "span": "whole minutes or hours, such as 30m or 2h",
             "unsigned": "a decimal integer from 0 to 18446744073709551615",
-            "json": "a JSON document of the shape hide mission help or hide task help shows",
+            "json": "a JSON document of the shape hide mission help, hide task help or hide board help shows",
             "paste_text": format!(
                 "non-empty, at most {} bytes, no control characters but line breaks (LF, CR) and tabs",
                 hide_core::pane_command::TEXT_LIMIT
@@ -1648,6 +1753,7 @@ fn body() -> Value {
             "watch": {"ok": "ok", "answer": "result", "code": "reason"},
             "mission": {"ok": "ok", "answer": "result", "code": "reason"},
             "plan": {"ok": "ok", "answer": "result", "code": "reason"},
+            "board": {"ok": "ok", "answer": "result", "code": "reason"},
             "device": {"ok": "ok", "answer": "value", "code": "error.code"},
             "pane": {"ok": "ok", "answer": "value", "code": "error.code"},
             "workspace": {"ok": "ok", "answer": "value", "code": "error.code"},
@@ -1692,6 +1798,12 @@ fn answers() -> Value {
     // The plan's own record and, for the caller's own plan, the summary its
     // hook keeps (`contracts/delivery-envelope.json`, `plan_context`).
     map.insert("plan".into(), shape(&["session", "plan"]));
+    // A board's line (`hide_core::boards::summary`), or with `show --json`
+    // its record; `show <board>` adds its Markdown, and `list` and a bare
+    // `show` answer every board of the caller's session.
+    map.insert("board".into(), shape(&["board"]));
+    map.insert("board_shown".into(), shape(&["board", "markdown"]));
+    map.insert("board_list".into(), shape(&["boards"]));
     map.insert(
         "agent_catalog".into(),
         shape(&["machine", "installed_known", "items"]),
@@ -1852,6 +1964,7 @@ mod tests {
                 | CommandKind::AgentSpawnBriefFile { .. }
                 | CommandKind::Mission(_)
                 | CommandKind::Plan(_)
+                | CommandKind::Board(_)
                 | CommandKind::AgentCatalog { .. }
                 | CommandKind::AgentProfile(_)
                 | CommandKind::Ps(_)

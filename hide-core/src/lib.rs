@@ -11,6 +11,8 @@ mod agent_sleep_engine;
 mod agent_start;
 pub mod agent_state;
 mod ai;
+mod board_store;
+pub mod boards;
 mod changes;
 mod checkout_git;
 mod checkout_owner;
