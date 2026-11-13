@@ -202,7 +202,8 @@ test("the operator keeps a board as a file, opens a closed one from the record, 
     const row = page.locator(`nav[data-sidebar] [data-pane="${pane}"]`).first();
     await page.locator(`[data-pane-view="${other}"] .xterm-screen`).click();
     await expect(page.locator(`[data-pane-view="${other}"]`)).toHaveAttribute("data-focused", "true");
-    expect((await board(["new", "--title", "Login flow", "--file", boardFile])).ok).toBe(true);
+    // A Korean title: the default file name keeps its letters as written.
+    expect((await board(["new", "--title", "로그인 흐름 정리: 토큰 갱신", "--file", boardFile])).ok).toBe(true);
     await row.locator(`[data-agent-open="${pane}"]`).click();
     const kept = page.locator('[data-board-view="board-1"]');
     await expect(kept.locator('[data-board-block="b1"]')).toContainText("The first text.");
@@ -212,7 +213,7 @@ test("the operator keeps a board as a file, opens a closed one from the record, 
     const field = page.locator("[data-board-keep-popover] [data-board-keep-path]");
     await expect(field).toBeVisible();
     const offered = await field.inputValue();
-    expect(offered).toMatch(/^docs\/boards\/\d{4}-\d{2}-\d{2}-login-flow\.md$/);
+    expect(offered).toMatch(/^docs\/boards\/\d{4}-\d{2}-\d{2}-로그인-흐름-정리-토큰-갱신\.md$/);
     await screenshot(page, "keep-path-popover");
     await page.locator("[data-board-keep-popover] [data-board-keep-confirm]").click();
     const file = path.join(checkout, ...offered.split("/"));

@@ -103,16 +103,40 @@ describe("a board display fed from rest.boards (board design, section 3, The wir
 
 describe("where 파일로 남기기 offers to keep a board (board design, section 4)", () => {
   const on = new Date(2026, 10, 3, 23, 59);
-  it("is docs/boards/, the operator's date, then the title's ASCII words", () => {
-    expect(defaultKeepPath({ id: "board-4", title: "Login flow: v2 (draft)" }, on)).toBe("docs/boards/2026-11-03-login-flow-v2-draft.md");
+  const keep = (title: string) => defaultKeepPath({ id: "board-4", title }, on);
+  const name = (path: string) => path.slice("docs/boards/".length);
+  it("is docs/boards/, the operator's date, then the title's words in lower case", () => {
+    expect(keep("Login flow: v2 (draft)")).toBe("docs/boards/2026-11-03-login-flow-v2-draft.md");
   });
-  it("falls back to the board's id when the title has no ASCII word", () => {
-    expect(defaultKeepPath({ id: "board-4", title: "로그인 흐름" }, on)).toBe("docs/boards/2026-11-03-board-4.md");
-    expect(defaultKeepPath({ id: "board-4", title: "API 설계" }, on)).toBe("docs/boards/2026-11-03-api.md");
+  it("keeps a Korean title's own letters, and Korean mixed with English", () => {
+    expect(keep("로그인 흐름 정리: 토큰 갱신")).toBe("docs/boards/2026-11-03-로그인-흐름-정리-토큰-갱신.md");
+    expect(keep("API 설계 v2")).toBe("docs/boards/2026-11-03-api-설계-v2.md");
   });
-  it("keeps a long title's slug short", () => {
-    const path = defaultKeepPath({ id: "board-4", title: "word ".repeat(40) }, on);
-    expect(path.length).toBeLessThanOrEqual("docs/boards/2026-11-03-.md".length + 80);
-    expect(path).toMatch(/^docs\/boards\/2026-11-03-word(-word)*\.md$/);
+  it("keeps Japanese and Chinese as written, composed (NFC)", () => {
+    expect(keep("ログイン設計")).toBe("docs/boards/2026-11-03-ログイン設計.md");
+    expect(keep("登录 流程")).toBe("docs/boards/2026-11-03-登录-流程.md");
+    const decomposed = "로그인".normalize("NFD");
+    expect(keep(decomposed)).toBe("docs/boards/2026-11-03-로그인.md");
+  });
+  it("falls back to the board's id when no letter or digit is left", () => {
+    expect(keep("🚀✨")).toBe("docs/boards/2026-11-03-board-4.md");
+    expect(keep("...")).toBe("docs/boards/2026-11-03-board-4.md");
+  });
+  it("leaves nothing a Windows, macOS or Linux file name refuses", () => {
+    const path = keep('a<b>c:d"e/f\\g|h?i*j\u0001k. ');
+    expect(path).toBe("docs/boards/2026-11-03-a-b-c-d-e-f-g-h-i-j-k.md");
+    expect(name(path)).not.toMatch(/[<>:"/\\|?*]|[. ]\.md$/);
+    expect([...name(path)].some((letter) => letter.charCodeAt(0) < 0x20)).toBe(false);
+  });
+  it("cuts a long title between two characters, within 255 bytes for the name and 300 characters for the path", () => {
+    for (const title of ["갱".repeat(200), "word ".repeat(80), "가a".repeat(150)]) {
+      const path = keep(title);
+      expect(new TextEncoder().encode(name(path)).length).toBeLessThanOrEqual(255);
+      expect([...path].length).toBeLessThanOrEqual(300);
+      expect(path).toMatch(/^docs\/boards\/2026-11-03-[^-].*[^-]\.md$/);
+      expect(path.includes("\ufffd")).toBe(false);
+    }
+    // 241 bytes are left for the slug: 80 Hangul syllables of three bytes.
+    expect(name(keep("갱".repeat(200)))).toBe(`2026-11-03-${"갱".repeat(80)}.md`);
   });
 });

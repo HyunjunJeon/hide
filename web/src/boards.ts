@@ -77,18 +77,49 @@ export function boardDisplayState(state: "open" | "opening" | "waiting" | "unava
   return state === "open" && board ? "open" : "waiting";
 }
 
+/** Where kept boards go by default, below the checkout. */
+const KEEP_FOLDER = "docs/boards/";
+/** The core's keep rule: a path of at most this many characters. */
+const KEEP_PATH_CHARS = 300;
+/** A file name on every system Hide runs on: at most this many bytes in UTF-8. */
+const FILE_NAME_BYTES = 255;
+
 /**
  * Where `파일로 남기기` offers to keep a board (board design, section 4):
- * `docs/boards/<YYYY-MM-DD>-<slug>.md`, the date the operator's own, the slug
- * the title's ASCII words in lower case joined by `-`, or the board's id when
- * the title has none. The core checks whatever path the operator sends.
+ * `docs/boards/<YYYY-MM-DD>-<slug>.md`, the date the operator's own. The
+ * slug is the title as written (NFC): its letters, digits and their marks in
+ * any script, each run of anything else (spaces, punctuation, symbols, an
+ * emoji) one `-`, lower case where the script has case, and no `-` at
+ * either end; so `로그인 흐름 정리: 토큰 갱신` reads `로그인-흐름-정리-토큰-갱신`.
+ * Nothing a Windows, macOS or Linux file name refuses survives (no
+ * `< > : " / \ | ? *`, control character or trailing dot or space), and
+ * the name starts with the date, so it is never a reserved device name such
+ * as `CON`. It is cut between two characters so the file name stays within
+ * 255 bytes and the path within the core's 300 characters; a title with
+ * nothing left gives the board's id. The core checks whatever path the
+ * operator sends.
  */
 export function defaultKeepPath(board: { id: string; title: string }, now: Date): string {
   const two = (value: number) => String(value).padStart(2, "0");
-  const date = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
-  const words = board.title.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-  const slug = words.join("-").slice(0, 80).replace(/-+$/, "") || board.id;
-  return `docs/boards/${date}-${slug}.md`;
+  const prefix = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}-`;
+  const words = board.title.normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "");
+  const slug = cutSlug(words, FILE_NAME_BYTES - utf8Bytes(prefix) - utf8Bytes(".md"), KEEP_PATH_CHARS - [...`${KEEP_FOLDER}${prefix}.md`].length) || board.id;
+  return `${KEEP_FOLDER}${prefix}${slug}.md`;
+}
+
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** `slug` cut between two characters (whole graphemes) to at most `bytes` UTF-8 bytes and `chars` code points, with no `-` left at its end. */
+function cutSlug(slug: string, bytes: number, chars: number): string {
+  let kept = "";
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(slug)) {
+    const next = kept + segment;
+    if (utf8Bytes(next) > bytes || [...next].length > chars) break;
+    kept = next;
+  }
+  return kept.replace(/-+$/, "");
 }
 
 /** The board and revision a View last drew: the web's own memory, never the core's (section 3, The edit). */

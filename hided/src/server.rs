@@ -5357,6 +5357,16 @@ mod tests {
     #[test]
     fn a_board_is_kept_only_at_a_path_the_cores_rule_admits() {
         let keep = |path: &str| json!({"schema_version": 2, "kind": "board_keep", "payload": {"board": "board-1", "path": path}});
+        for path in [
+            "docs/boards/2026-11-13-login-flow.md",
+            "docs/boards/2026-11-13-로그인-흐름-정리.md",
+        ] {
+            assert_eq!(
+                board_keep_path(&mut keep(path), "board_keep"),
+                None,
+                "{path}"
+            );
+        }
         let mut event = keep("docs/boards/2026-11-13-login-flow.md");
         assert_eq!(board_keep_path(&mut event, "board_keep"), None);
         assert_eq!(

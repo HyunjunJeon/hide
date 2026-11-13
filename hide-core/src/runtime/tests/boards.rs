@@ -1666,6 +1666,9 @@ enum SaveFault {
 struct KeepHost {
     folder: std::path::PathBuf,
     faults: Mutex<VecDeque<SaveFault>>,
+    /// While set, a save waits before it reaches the host.
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
     pins: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
 }
 
@@ -1674,10 +1677,17 @@ impl KeepHost {
         let host = Arc::new(Self {
             folder: folder.canonicalize().unwrap(),
             faults: Mutex::new(VecDeque::new()),
+            held: Mutex::new(false),
+            released: std::sync::Condvar::new(),
             pins: Mutex::new(HashMap::new()),
         });
         runtime.use_own_node(host.clone());
         host
+    }
+
+    fn hold_saves(&self, held: bool) {
+        *self.held.lock().unwrap() = held;
+        self.released.notify_all();
     }
 
     fn fail_next_save(&self, fault: SaveFault) {
@@ -1693,6 +1703,12 @@ impl NodeLink for KeepHost {
             .replace("\"/checkouts/fixture", &format!("\"{folder}"));
         let call: Call = serde_json::from_str(&text).unwrap();
         let local = hide_node::Local::of_process();
+        if matches!(call, Call::Save { .. }) {
+            let mut held = self.held.lock().unwrap();
+            while *held {
+                held = self.released.wait(held).unwrap();
+            }
+        }
         if matches!(call, Call::Save { .. })
             && let Some(fault) = self.faults.lock().unwrap().pop_front()
         {
@@ -2291,8 +2307,14 @@ fn a_kept_board_stays_in_its_session_record_as_its_file() {
         ),
         ("board-1", "kept", Some(KEPT_AT), "/checkouts/fixture")
     );
-    // Opening a kept board is opening its file; the board itself opens no more.
+    // Opening a kept board is opening its file; the board itself opens no
+    // more, once its View has become the file's.
     drop(guard);
+    wait(
+        &runtime,
+        "the board's View to become its file's",
+        |runtime| board_views(runtime).is_empty(),
+    );
     send(&runtime, "board_open", json!({"board": "board-1"}));
     assert!(board_views(&runtime.lock().unwrap()).is_empty());
 }
@@ -2495,4 +2517,144 @@ fn a_keep_from_a_workspace_that_does_not_show_the_board_writes_nothing() {
     assert_eq!(keep_of(&guard, "board-1"), None);
     assert_eq!(guard.boards.get("board-1").unwrap().state.name(), "open");
     assert!(!folder.path().join("docs").exists());
+}
+
+/// A press on a board's tile is one event: an open the core refuses (the
+/// board was deleted after the record drew it) moves nothing, and one it
+/// takes brings the board's checkout forward with the board in front.
+#[test]
+fn a_refused_board_open_moves_nothing_and_a_taken_one_brings_its_checkout_forward() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    {
+        let mut guard = runtime.lock().unwrap();
+        let first = view_of(&ok(&mut guard, &recipient(), login_flow()));
+        assert!(super::view_areas::act(
+            &mut guard,
+            json!({"action": "close", "display_id": first}),
+        ));
+        let mut gone = login_flow();
+        gone["title"] = json!("Gone");
+        ok(&mut guard, &recipient(), gone);
+        ok(
+            &mut guard,
+            &recipient(),
+            json!({"verb": "delete", "board": "board-2"}),
+        );
+        // The operator is elsewhere, in no checkout of this one.
+        guard.snapshot.navigator.focused_checkout_id = None;
+    }
+    let layout =
+        |runtime: &Arc<Mutex<Runtime>>| runtime.lock().unwrap().view_layout_of(&key()).cloned();
+    let before = layout(&runtime);
+    send(&runtime, "board_open", json!({"board": "board-2"}));
+    assert_eq!(layout(&runtime), before, "a refused open changes no View");
+    assert_eq!(
+        runtime
+            .lock()
+            .unwrap()
+            .snapshot
+            .navigator
+            .focused_checkout_id,
+        None
+    );
+
+    send(&runtime, "board_open", json!({"board": "board-1"}));
+    let guard = runtime.lock().unwrap();
+    assert_eq!(
+        guard.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("checkout")
+    );
+    let views = board_views(&guard);
+    assert_eq!(views.len(), 1);
+    let layout = guard.view_layout_of(&key()).unwrap();
+    assert_eq!(
+        layout
+            .area_of(&views[0].0)
+            .and_then(|area| area.active.clone()),
+        Some(views[0].0.clone())
+    );
+}
+
+/// The View keep was pressed in, closed while the file is written: the file
+/// opens in that checkout's active area instead of nowhere.
+#[test]
+fn a_board_whose_view_closed_while_it_was_kept_opens_its_file_in_the_active_area() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, host) = keeping(root.path(), folder.path());
+    let view = view_of(&ok(
+        &mut runtime.lock().unwrap(),
+        &recipient(),
+        login_flow(),
+    ));
+    host.hold_saves(true);
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT, "workspace": here()}),
+    );
+    assert!(super::view_areas::act(
+        &mut runtime.lock().unwrap(),
+        json!({"action": "close", "display_id": view}),
+    ));
+    host.hold_saves(false);
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    let path = format!("/checkouts/fixture/{KEPT_AT}");
+    wait(&runtime, "the kept file's View", |runtime| {
+        runtime.view_layout_of(&key()).is_some_and(|layout| {
+            layout
+                .displays()
+                .any(|display| display.kind == DisplayKind::File && display.path == path)
+        })
+    });
+}
+
+/// A Korean title's default path: every layer takes the name as written, so
+/// the file is made under it and the View shows it.
+#[test]
+fn a_board_is_kept_at_a_path_in_korean() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    let view = view_of(&ok(
+        &mut runtime.lock().unwrap(),
+        &recipient(),
+        login_flow(),
+    ));
+    let kept_at = "docs/boards/2026-11-13-로그인-흐름-정리-토큰-갱신.md";
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": kept_at, "workspace": here()}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    let export = crate::boards::markdown(runtime.lock().unwrap().boards.get("board-1").unwrap());
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(kept_at)).unwrap(),
+        export
+    );
+    let path = format!("/checkouts/fixture/{kept_at}");
+    wait(
+        &runtime,
+        "the board's View to become its file's",
+        |runtime| {
+            runtime
+                .view_layout_of(&key())
+                .and_then(|layout| layout.display(&view))
+                .is_some_and(|display| display.kind == DisplayKind::File && display.path == path)
+        },
+    );
+    let refusal = run(
+        &mut runtime.lock().unwrap(),
+        &recipient(),
+        json!({"verb": "edit", "board": "board-1", "edits": [
+            {"op": "update", "id": "b1", "changes": {"text": "Second text"}},
+        ]}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        code(&refusal),
+        ("board_kept", Some(&*format!("its file is {kept_at}")))
+    );
 }

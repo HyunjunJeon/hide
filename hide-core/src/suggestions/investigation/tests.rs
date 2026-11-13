@@ -836,6 +836,9 @@ fn a_project_with_a_board_lists_it_in_the_turn_input_within_the_records_budget()
     assert!(listed[0].get("kept_path").is_none());
     assert_eq!(listed[1]["state"], "kept");
     assert_eq!(listed[1]["kept_path"], "docs/boards/2026-11-13-plan.md");
+    // Kept in its own checkout, `/repo-wt`, named by its folder alone.
+    assert_eq!(listed[1]["kept_in"], "repo-wt");
+    assert!(listed[0].get("kept_in").is_none());
     assert_eq!(listed[1]["record"], 3, "session b's newest record");
     let sent = serde_json::to_string(input).unwrap();
     assert!(

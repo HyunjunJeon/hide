@@ -3441,15 +3441,10 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
       const layout = inFront ? workspaceViewOf(rest())?.layout : null;
       const shown = layout ? areasOfLayout(layout.root).flatMap((area) => area.displays).find((display) => display.board === board.id) : undefined;
       if (shown) return this.openViewAt(board.device_id, board.checkout_path, shown.id);
-      // The checkout comes forward first, so the board's open, which the core
-      // brings to the front of its area, is the last word on what shows.
-      if (!inFront) {
-        if (board.device_id !== node) this.openWorkspace(board.device_id, project.id, checkout.id);
-        else {
-          beginOpening({ checkoutId: checkout.id, deviceId: node, path: checkout.path, workspaceId: project.id });
-          dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: project.id, checkout_id: checkout.id, ...(frontDeviceId(rest()) !== node ? { focus_device: true } : {}) } });
-        }
-      }
+      // One event: the core brings the board's checkout forward and its View
+      // to the front, or refuses and moves nothing; the page only leaves the
+      // Overview and says the checkout is opening, as an open from there does.
+      if (!inFront) beginOpening({ checkoutId: checkout.id, deviceId: board.device_id, path: checkout.path, workspaceId: project.id });
       ui().setStackFront("view");
       dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id } });
     },

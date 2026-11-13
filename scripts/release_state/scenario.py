@@ -357,7 +357,28 @@ class Scenario:
                     raise NotInRelease(f"rc={result['rc']} {result['err'][-300:]}")
                 raise Stop(f"`{command}` answered rc={result['rc']} {result['out'][-1500:]} {result['err'][-400:]}")
             drawn[agent] = answer["result"]["board"]["id"]
+        self.drawn_boards = drawn
         return drawn
+
+    def board_keep(self):
+        """The device's board kept by the operator as a file of the device's
+        checkout, from its View there: its file names the checkout it was
+        kept in (`kept_checkout`), whose machine a device's new id rekeys. A
+        release before keep has no `board_keep` event and leaves the board
+        open, and the report records the step as not done."""
+        board = (getattr(self, "drawn_boards", None) or {}).get("dev-a")
+        if not board:
+            raise NotInRelease("no board was drawn on the device")
+        self.send("board_keep", {"board": board, "path": "docs/boards/release-state.md",
+                                 "workspace": {"device_id": self.device, "path": DEVICE_REPO}})
+        state = None
+        for _ in range(10):
+            shown = self.run("dev-a", f"hide board show {board} --json")
+            state = (((shown.get("json") or {}).get("result") or {}).get("board") or {}).get("state")
+            if state == "kept":
+                return {"board": board, "state": state}
+            time.sleep(2)
+        raise NotInRelease(f"{board} is still {state}")
 
     def mission(self):
         """A mission conducted from the device, with its worker there: a
@@ -737,6 +758,7 @@ class Scenario:
             self.step("project memory cards", self.memory)
             self.step("plan step spawned from a device session", self.plan_spawn)
             self.step("a board drawn on the core and on the device", self.boards)
+            self.step("the device's board kept as a file of its checkout", self.board_keep)
             self.step("mission conducted on the device with its worker there", self.mission)
             self.step("decision View opened by a device agent and closed", self.decision_view)
             self.step("missions in each state a later build reads", self.mission_states)

@@ -1138,9 +1138,9 @@ impl Runtime {
 
     /// A keep's answer, under the lock: a written file makes the board
     /// `kept` and its View that file's; anything else is the board's to show.
-    /// No agent command changed the board meanwhile (`check_not_keeping`);
-    /// one the operator deleted while it was written keeps the file and stays
-    /// deleted.
+    /// Neither an agent's command nor the operator's delete changed the board
+    /// meanwhile (`check_not_keeping`); a board that went with its session's
+    /// records while the file was written keeps the file and is not put back.
     pub(super) fn ingest_board_keep(
         &mut self,
         request: KeepRequest,
@@ -1194,10 +1194,10 @@ impl Runtime {
     /// the operator's own open, seen and wearing no agent's mark. Its Views
     /// in other checkouts close, since the file is not of their checkout.
     fn show_kept_file(&mut self, request: &KeepRequest) {
-        let home = Some((
+        let home: WorkspaceKey = (
             request.checkout.device_id.clone(),
             request.checkout.path.clone(),
-        ));
+        );
         let shown: Vec<(WorkspaceKey, String, String)> = self
             .every_view_layout()
             .flat_map(|(key, layout)| {
@@ -1218,7 +1218,7 @@ impl Runtime {
             .collect();
         let mut swapped = false;
         for (key, area, display) in shown {
-            if !swapped && Some(&key) == home.as_ref() {
+            if !swapped && key == home {
                 swapped = true;
                 let source = self.document_source(&request.workspace_id, &request.checkout_id);
                 match source {
@@ -1253,6 +1253,37 @@ impl Runtime {
                 continue;
             }
             self.close_view_display(&key, &display, None, false);
+        }
+        // The View it was pressed in closed while the file was written: the
+        // file opens in that checkout's active area instead.
+        if !swapped
+            && let Some(area) = self
+                .view_layout_of(&home)
+                .map(|layout| layout.active_area().id.clone())
+            && let Ok((root, channel)) =
+                self.document_source(&request.workspace_id, &request.checkout_id)
+        {
+            self.start_document_open(
+                root,
+                channel,
+                super::documents::OpenRequestFields {
+                    workspace_id: request.workspace_id.clone(),
+                    checkout_id: request.checkout_id.clone(),
+                    path: request.absolute.clone(),
+                    preview: false,
+                    reload: false,
+                    reveal: None,
+                    restore: false,
+                    placement: Some(super::view_areas::ViewPlacement {
+                        key: home,
+                        owner: None,
+                        area,
+                        preview: false,
+                        beside: false,
+                        replace: None,
+                    }),
+                },
+            );
         }
         self.refresh_unseen_rows();
     }
@@ -1320,21 +1351,26 @@ impl Runtime {
         true
     }
 
-    /// The operator's press on an open board's tile in the session record:
-    /// its View in the board's own checkout comes to the front of its area,
-    /// made again when it was closed, as the operator's own open (seen) that
-    /// still wears the mark of the agent that drew it while that agent's
-    /// session runs in a pane.
+    /// The operator's press on an open board's tile in the session record,
+    /// one event: the board's own checkout comes forward and its View, made
+    /// again when it was closed, comes to the front of its area, as the
+    /// operator's own open (seen) that still wears the mark of the agent
+    /// that drew it while that agent's session runs in a pane. Everything
+    /// that can refuse it is checked first, so a refused open moves nothing.
     pub(super) fn operator_open_board(&mut self, id: &str) -> bool {
+        let refused = |reason: &str| {
+            crate::diagnostic!(json!({
+                "component": "boards", "kind": "boards.open_refused",
+                "board": id, "reason": reason,
+            }));
+            false
+        };
         let Some(board) = self
             .boards
             .get(id)
             .filter(|board| board.state == BoardState::Open)
         else {
-            crate::diagnostic!(json!({
-                "component": "boards", "kind": "boards.open_refused", "board": id,
-            }));
-            return false;
+            return refused("not_open");
         };
         let key: WorkspaceKey = (
             board.checkout.device_id.clone(),
@@ -1342,7 +1378,9 @@ impl Runtime {
         );
         let title = board.title.clone();
         let owner = board.owner.clone();
-        let checkout = board.checkout.clone();
+        let Some((workspace, checkout)) = self.board_checkout_ids(&board.checkout) else {
+            return refused("checkout_not_open");
+        };
         let existing = self
             .view_layout_of(&key)
             .and_then(|layout| shown_board(layout, id))
@@ -1382,14 +1420,17 @@ impl Runtime {
                 return true;
             }
         };
+        // The checkout comes forward as `focus_checkout` brings one with a
+        // display to show, and the View follows only once it has.
+        if self.snapshot.navigator.focused_checkout_id.as_deref() != Some(checkout.as_str()) {
+            self.focus_checkout(&workspace, &checkout);
+        }
         // The board wearing its agent's mark can make the keyboard's strip
         // that agent's (a strip is a session's only while a View of it is
         // open), and a strip that switches puts that session's remembered
         // View in front; the strip settles first, so this open comes last.
         self.settle_view_sessions();
-        // Forward as any View the operator brings back is: in its own strip,
-        // on the documents, in front of its area.
-        if let Some((workspace, checkout)) = self.board_checkout_ids(&checkout) {
+        if self.snapshot.navigator.focused_checkout_id.as_deref() == Some(checkout.as_str()) {
             self.focus_view_display_of(&workspace, &checkout, &view);
         }
         crate::diagnostic!(json!({

@@ -412,7 +412,14 @@ pub fn write_new_file(
     );
     match saved {
         Ok(_) => NewFileOutcome::Written,
-        Err(LinkError::Refused(error)) if error.code == ErrorCode::Conflict => taken(),
+        // Someone wrote first: an earlier attempt whose save landed late
+        // wrote these same contents, anyone else something to keep.
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::Conflict => {
+            match revision_now(channel, &place) {
+                Ok(Some(revision)) if revision == written => NewFileOutcome::Written,
+                _ => taken(),
+            }
+        }
         // The answer was lost: the file says whether the save landed.
         Err(LinkError::Unknown(reason)) => match revision_now(channel, &place) {
             Ok(Some(revision)) if revision == written => NewFileOutcome::Written,

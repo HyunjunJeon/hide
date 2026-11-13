@@ -82,7 +82,7 @@ An unresolved disagreement needs an operator answer.
 ## The suggestion investigation
 
 Moved to a private document: `docs/suggestion-investigation.md` in with-hide/hide-private.
-Each turn's input lists the boards the Project's sessions drew (`hide_core::boards`; at most 20, newest first, none deleted, inside the records' bytes), and a `board` read answers one from the copies the run took with its parts, never from a node, through the same redaction and one-result bound as every other read (`hide-core/src/suggestions/investigation/reads.rs`).
+Each turn's input lists the boards the Project's sessions drew (`hide_core::boards`; at most 20, newest first, none deleted, inside the records' bytes; a kept one with its file and the name of the checkout folder that holds it, never a full path), and a `board` read answers one from the copies the run took with its parts, never from a node, through the same redaction and one-result bound as every other read (`hide-core/src/suggestions/investigation/reads.rs`).
 
 ## Providers
 
