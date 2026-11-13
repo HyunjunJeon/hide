@@ -4,7 +4,7 @@ import { sameGithubPullRequest } from "./pullRequestIdentity";
 import { useGroupFeedback } from "./groupTabs";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
-import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
+import { areasOf as areasOfLayout, findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
 // Every shell command in one place, so a shortcut, a button and a menu run
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
@@ -3425,11 +3425,23 @@ export function createActions(send: DispatchFn, clipboard?: Clipboard) {
         dispatch({ schema_version: 2, kind: "reveal_path", payload: { path, workspace_id: project.id, checkout_id: checkout.id, is_directory: false, ...device } });
         return;
       }
+      // A View of it already in front's layout comes forward by its id, as a
+      // record View's does; otherwise the core makes it again and brings it
+      // forward itself, so the page asks for nothing that could race it.
+      const layout = inFront ? workspaceViewOf(rest())?.layout : null;
+      const shown = layout ? areasOfLayout(layout.root).flatMap((area) => area.displays).find((display) => display.board === board.id) : undefined;
+      if (shown) return this.openViewAt(board.device_id, board.checkout_path, shown.id);
+      // The checkout comes forward first, so the board's open, which the core
+      // brings to the front of its area, is the last word on what shows.
+      if (!inFront) {
+        if (board.device_id !== node) this.openWorkspace(board.device_id, project.id, checkout.id);
+        else {
+          beginOpening({ checkoutId: checkout.id, deviceId: node, path: checkout.path, workspaceId: project.id });
+          dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: project.id, checkout_id: checkout.id, ...(frontDeviceId(rest()) !== node ? { focus_device: true } : {}) } });
+        }
+      }
+      ui().setStackFront("view");
       dispatch({ schema_version: 2, kind: "board_open", payload: { board: board.id } });
-      if (inFront) return showDocuments();
-      if (board.device_id !== node) return this.openWorkspace(board.device_id, project.id, checkout.id);
-      beginOpening({ checkoutId: checkout.id, deviceId: node, path: checkout.path, workspaceId: project.id });
-      dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: project.id, checkout_id: checkout.id, ...(frontDeviceId(rest()) !== node ? { focus_device: true } : {}) } });
     },
 
     /** `파일로 남기기`: the board written into a new file at `path` below its checkout (board design, section 4). */

@@ -2196,11 +2196,16 @@ fn a_closed_board_is_listed_in_its_session_record_and_opened_again_as_the_operat
             json!({"action": "close", "display_id": view}),
         ));
         assert!(board_views(&guard).is_empty());
+        // The operator has moved on to a page in the same area.
+        open_page(&mut guard, &recipient(), "https://example.invalid/next");
         // The open board is listed though no View shows it; the deleted one
         // is not.
         assert_eq!(record_boards(&guard), [("board-1".to_owned(), "open")]);
     }
 
+    // The operator is in the drawing agent's own pane when they press the
+    // tile, as when its pane head opened the record.
+    keyboard(&mut runtime.lock().unwrap(), Some("recipient"));
     send(&runtime, "board_open", json!({"board": "board-1"}));
     let guard = runtime.lock().unwrap();
     let views = board_views(&guard);
@@ -2221,7 +2226,25 @@ fn a_closed_board_is_listed_in_its_session_record_and_opened_again_as_the_operat
     );
     let area = layout.area_of(&views[0].0).unwrap();
     assert_eq!(area.active.as_deref(), Some(views[0].0.as_str()));
-    assert!(row(&guard, "recipient").look.is_none());
+    // The page the agent opened may still wait; the board does not.
+    assert_ne!(
+        row(&guard, "recipient")
+            .look
+            .as_ref()
+            .map(|look| look.view_id.as_str()),
+        Some(views[0].0.as_str())
+    );
+    // The frame the page draws has it in front too.
+    let board_view = views[0].0.clone();
+    drop(guard);
+    let mut guard = runtime.lock().unwrap();
+    guard.snapshot_delta_payload(0);
+    let layout = &guard.snapshot.workspace_view.as_ref().unwrap().layout;
+    let fronts: Vec<Option<String>> = super::view_areas::areas(layout)
+        .into_iter()
+        .map(|(_, active, _)| active)
+        .collect();
+    assert!(fronts.contains(&Some(board_view)), "{fronts:?}");
 }
 
 #[test]
@@ -2266,4 +2289,61 @@ fn caller_session_of(runtime: &Runtime, pane: &str) -> crate::links::ledger::Ses
         .find(|(held, _)| held == pane)
         .map(|(_, session)| session)
         .unwrap()
+}
+
+/// The front a frame draws in each area of the fixture's checkout.
+fn drawn_fronts(runtime: &mut Runtime) -> Vec<Option<String>> {
+    runtime.snapshot_delta_payload(0);
+    let layout = &runtime.snapshot.workspace_view.as_ref().unwrap().layout;
+    super::view_areas::areas(layout)
+        .into_iter()
+        .map(|(_, active, _)| active)
+        .collect()
+}
+
+/// A board opened again wears its agent's mark, which makes the keyboard's
+/// strip that agent's again when no other View of it is open; the strip's
+/// switch puts the View it remembered for that agent in front, and the open
+/// still comes last.
+#[test]
+fn a_board_opened_again_comes_in_front_of_what_its_agents_strip_remembered() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let (runtime, _) = keeping(root.path(), folder.path());
+    {
+        let mut guard = runtime.lock().unwrap();
+        keyboard(&mut guard, Some("recipient"));
+        ok(&mut guard, &recipient(), login_flow());
+        guard.snapshot_delta_payload(0);
+    }
+    // The first board kept: its file's View is the operator's own.
+    send(
+        &runtime,
+        "board_keep",
+        json!({"board": "board-1", "path": KEPT_AT}),
+    );
+    assert_eq!(keep_ended(&runtime, "board-1"), None);
+    wait(&runtime, "the file's View", |runtime| {
+        board_views(runtime).is_empty()
+    });
+    let mut guard = runtime.lock().unwrap();
+    let file = drawn_fronts(&mut guard);
+    let mut second = login_flow();
+    second["title"] = json!("Cache layout");
+    let view = view_of(&ok(&mut guard, &recipient(), second));
+    // The operator looks, from the agent's row.
+    guard.focus_view_display_of("workspace", "checkout", &view);
+    assert_eq!(drawn_fronts(&mut guard), [Some(view.clone())]);
+    // Closed, it leaves the agent no View, and the strip the operator's.
+    assert!(super::view_areas::act(
+        &mut guard,
+        json!({"action": "close", "display_id": view}),
+    ));
+    assert_eq!(drawn_fronts(&mut guard), file);
+    drop(guard);
+
+    send(&runtime, "board_open", json!({"board": "board-2"}));
+    let mut guard = runtime.lock().unwrap();
+    let again = board_views(&guard).pop().unwrap().0;
+    assert_eq!(drawn_fronts(&mut guard), [Some(again)]);
 }

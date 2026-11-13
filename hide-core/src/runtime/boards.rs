@@ -1315,6 +1315,7 @@ impl Runtime {
         );
         let title = board.title.clone();
         let owner = board.owner.clone();
+        let checkout = board.checkout.clone();
         let existing = self
             .view_layout_of(&key)
             .and_then(|layout| shown_board(layout, id))
@@ -1330,26 +1331,44 @@ impl Runtime {
         if existing.is_none() && !self.make_view_room(&key) {
             return true;
         }
-        let opened = self.change_view_layout(&key, |layout, stamp| {
-            if let Some(view) = &existing {
-                layout.focus(view, stamp)?;
-                return Ok(((), true));
+        let placed = match existing {
+            Some(view) => Ok(view),
+            None => self.change_view_layout(&key, |layout, stamp| {
+                let mut display = layout.new_board_display(id, &title);
+                if let Some(opener) = opener {
+                    display.opened_by(opener);
+                }
+                display.operator = true;
+                let view = display.id.clone();
+                let area = layout.active_area().id.clone();
+                layout.insert(&area, display, stamp)?;
+                Ok((view, true))
+            }),
+        };
+        let view = match placed {
+            Ok(view) => view,
+            Err(error) => {
+                crate::diagnostic!(json!({
+                    "component": "boards", "kind": "boards.open_failed",
+                    "board": id, "device": key.0, "error": error.kind(),
+                }));
+                return true;
             }
-            let mut display = layout.new_board_display(id, &title);
-            if let Some(opener) = opener {
-                display.opened_by(opener);
-            }
-            display.operator = true;
-            let area = layout.active_area().id.clone();
-            layout.insert(&area, display, stamp)?;
-            Ok(((), true))
-        });
-        if let Err(error) = opened {
-            crate::diagnostic!(json!({
-                "component": "boards", "kind": "boards.open_failed",
-                "board": id, "device": key.0, "error": error.kind(),
-            }));
+        };
+        // The board wearing its agent's mark can make the keyboard's strip
+        // that agent's (a strip is a session's only while a View of it is
+        // open), and a strip that switches puts that session's remembered
+        // View in front; the strip settles first, so this open comes last.
+        self.settle_view_sessions();
+        // Forward as any View the operator brings back is: in its own strip,
+        // on the documents, in front of its area.
+        if let Some((workspace, checkout)) = self.board_checkout_ids(&checkout) {
+            self.focus_view_display_of(&workspace, &checkout, &view);
         }
+        crate::diagnostic!(json!({
+            "component": "boards", "kind": "boards.opened_by_operator",
+            "board": id, "view": view, "device": key.0,
+        }));
         true
     }
 }
