@@ -907,6 +907,16 @@ fn an_agents_board_opened_behind_the_operator_waits_in_needs_you_named_by_its_ti
         (&json!("board"), &json!("board-1"), &json!(true))
     );
 
+    // A report letter names it by id and title, for an ancestor to read.
+    let mut report = String::new();
+    guard.list_opened_views("recipient", &mut report);
+    assert!(
+        report.contains(&format!(
+            "- {view} board board-1 · Login flow (not seen by the operator)"
+        )),
+        "{report}"
+    );
+
     // A new title is the row's at once.
     ok(
         &mut guard,
@@ -1046,6 +1056,48 @@ fn the_view_cap_closes_a_board_view_and_the_board_opens_again() {
     .0;
     assert_eq!(opened["view"]["open"], true);
     assert_eq!(board_views(&guard).len(), 1);
+}
+
+#[test]
+fn a_board_drawn_into_a_full_workspace_is_kept_and_its_view_says_why_it_is_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = on_screen(root.path(), false);
+    let mut guard = runtime.lock().unwrap();
+    // Files still to be read hold no document the cap could close.
+    guard
+        .change_view_layout(&key(), |layout, stamp| {
+            for n in 0..crate::view_layout::MAX_VIEW_DISPLAYS {
+                let display =
+                    layout.new_display(&format!("src/{n}.rs"), DisplayKind::File, None, false);
+                let area = layout.active_area().id.clone();
+                layout.insert(&area, display, stamp)?;
+            }
+            Ok(((), true))
+        })
+        .unwrap();
+
+    let drawn = ok(&mut guard, &recipient(), login_flow());
+    assert_eq!(
+        (
+            &drawn["board"]["id"],
+            &drawn["view"]["open"],
+            &drawn["view"]["reason"]
+        ),
+        (&json!("board-1"), &json!(false), &json!("view_limit"))
+    );
+    assert!(board_views(&guard).is_empty());
+    assert_eq!(
+        code(
+            &run(
+                &mut guard,
+                &recipient(),
+                json!({"verb": "open", "board": "board-1"})
+            )
+            .unwrap_err()
+        )
+        .0,
+        "view_limit"
+    );
 }
 
 #[test]

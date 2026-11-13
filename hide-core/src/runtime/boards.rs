@@ -576,8 +576,19 @@ impl Runtime {
         let action = Action::OpenBoard {
             board: id.to_owned(),
         };
-        self.workspace_control_action(device, caller, expected, &request_id, action, Ok(None))?;
-        Ok(self.board_view_line(id))
+        let opened =
+            self.workspace_control_action(device, caller, expected, &request_id, action, Ok(None))?;
+        // The View this open showed, in the caller's checkout, though the
+        // board may be shown in another checkout too.
+        let key = (
+            opened.context.device_id.clone(),
+            opened.context.checkout_path.clone(),
+        );
+        let unseen = self
+            .view_layout_of(&key)
+            .and_then(|layout| layout.display(&opened.view_id))
+            .is_some_and(|display| display.unseen.is_some());
+        Ok(json!({"id": opened.view_id, "open": true, "unseen": unseen}))
     }
 
     /// The View that shows board `id`, in whichever Workspace it is.

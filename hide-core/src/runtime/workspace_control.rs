@@ -600,7 +600,15 @@ impl Runtime {
                     layout.insert(&area, display, stamp)?;
                     Ok((id, true))
                 })
-                .map_err(layout_refusal)?;
+                // A Workspace full of Views no cap could close answers as
+                // a file's open does.
+                .map_err(|error| match error {
+                    crate::view_layout::LayoutError::DisplayLimit => Refusal {
+                        reason: "view_limit",
+                        next_action: "Close an unused View or area and retry",
+                    },
+                    other => layout_refusal(other),
+                })?;
             let area_id = self
                 .view_layout_of(key)
                 .and_then(|layout| layout.area_of(&view_id))
